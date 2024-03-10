@@ -1,2 +1,4 @@
 data/*
 credentials.json
+token.json
+quickstart.py
