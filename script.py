@@ -1,3 +1,5 @@
+# Description: This script is used to update the Google Calendar with the latest basketball games from the ProBasket website for a provided club ID. For a new season, just delete/archive the games.db and allow for a new one to be created. The script will create a new event for each game that does not have a calendar event ID, and update the event if the game data has changed
+
 import datetime
 import os.path
 import requests
@@ -21,7 +23,7 @@ from googleapiclient.errors import HttpError
 DEBUG = True
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 DBPATH = './data/games.db'
-CALENDAR_ID = "925a0d61e624b1742abf37419fb1ff0777c5b40cb1166d8be0c6b42d7f6432a2@group.calendar.google.com"
+CALENDARID = "925a0d61e624b1742abf37419fb1ff0777c5b40cb1166d8be0c6b42d7f6432a2@group.calendar.google.com"
 
 
 #region Functions
@@ -30,7 +32,6 @@ def main():
     authenticate()
     updateGames()
     checkGames()
-    # pprint(loadGames())
 
 
 def authenticate():
@@ -105,10 +106,10 @@ def updateEvent(loadedGame, case = 'update'):
         }
 
         if case == 'update':
-            event = service.events().patch(calendarId=CALENDAR_ID, eventId=loadedGame['calendarEventId'], body=event).execute()
+            event = service.events().patch(calendarId=CALENDARID, eventId=loadedGame['calendarEventId'], body=event).execute()
         if case == 'create':
-            event = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-            updateGame(loadedGame['id'], event['id'])
+            event = service.events().insert(calendarId=CALENDARID, body=event).execute()
+            updateGameDB(loadedGame['id'], event['id'])
 
     except HttpError as error:
         log(f"An error occurred: {error}", "error")
@@ -131,7 +132,7 @@ def checkGames():
             for event in calendarEvents:
                 if (event['id'] == game['calendarEventId']):
                     if not compareGame(game, event):
-                        updateEvent(game)
+                        updateEvent(game, 'update')
                         updatedGamesCount += 1
                         log(f"Updated game with id {game['id']}", "info")
                     else:
@@ -157,7 +158,7 @@ def createTable(conn):
             awayTeam text,
             gym text,
             result text,
-            calendarEventId text DEFAULT NULL
+            calendarEventId text NULL
         )
     ''')
 
@@ -217,6 +218,7 @@ def updateGames():
         elements = game.find_all('td')
 
         id = elements[2].text + '_' + elements[3].text + '_' + elements[4].text
+        id = id.replace(' ', '_').lower()
 
         date = elements[1].text
         dateObj = datetime.datetime.strptime(date, '%d.%m.%Y, %H:%M')
@@ -249,19 +251,23 @@ def updateGames():
     c = conn.cursor()
 
     for game in gamesList:
-
+        # Attempt to insert the new game, ignoring the operation if the game already exists
         c.execute('''
-            INSERT OR REPLACE INTO games VALUES (
-                :id,
-                :day,
-                :date,
-                :league,
-                :homeTeam,
-                :awayTeam,
-                :gym,
-                :result,
-                :calendarEventId
-            )
+            INSERT OR IGNORE INTO games (id, day, date, league, homeTeam, awayTeam, gym, result)
+            VALUES (:id, :day, :date, :league, :homeTeam, :awayTeam, :gym, :result)
+        ''', game)
+
+        # Update the game if it already exists, excluding the calendarEventId field
+        c.execute('''
+            UPDATE games
+            SET day = :day,
+                date = :date,
+                league = :league,
+                homeTeam = :homeTeam,
+                awayTeam = :awayTeam,
+                gym = :gym,
+                result = :result
+            WHERE id = :id
         ''', game)
 
     # Commit the changes and close the connection
@@ -269,19 +275,25 @@ def updateGames():
     conn.close()
 
 
-def updateGame(id, calendarEventId):
-    conn = sqlite3.connect(DBPATH)
-    c = conn.cursor()
-    log(f"Updating game with id {id} with calendarEventId {calendarEventId}", "info")
+def updateGameDB(id, calendarEventId):
+    try:
+        conn = sqlite3.connect(DBPATH)
+        c = conn.cursor()
+        log(f"Attempting to update game with id {id} with calendarEventId {calendarEventId}", "info")
 
-    c.execute('''
-        UPDATE games
-        SET calendarEventId = :calendarEventId
-        WHERE id = :id
-    ''', {'id': id, 'calendarEventId': calendarEventId})
+        c.execute('''
+            UPDATE games
+            SET calendarEventId = :calendarEventId
+            WHERE id = :id
+        ''', {'id': id, 'calendarEventId': calendarEventId})
 
-    conn.commit()
-    conn.close()
+        log(f"Rows updated: {c.rowcount}", "info")
+
+        conn.commit()
+    except sqlite3.Error as e:
+        log(f"An error occurred: {e}", "error")
+    finally:
+        conn.close()
 
 
 def fetchCalendarEvents():
@@ -289,7 +301,7 @@ def fetchCalendarEvents():
         service = getService()
         #   now = datetime.datetime.utcnow().isoformat() + "Z"
         # The calendar ID can be found in the settings of the Google Calendar (this is the id of the EB calendar)
-        events_result = service.events().list(calendarId=CALENDAR_ID, maxResults=500, singleEvents=True, orderBy="startTime").execute()
+        events_result = service.events().list(calendarId=CALENDARID, maxResults=500, singleEvents=True, orderBy="startTime").execute()
         events = events_result.get("items", [])
 
         if not events:
@@ -306,7 +318,7 @@ def compareGame(game, calendarEvent):
     # Compare the game data with the calendar event data
     # Return True if they match, False otherwise
     return (
-        datetime.datetime.strptime(game['date'], '%Y-%m-%d %H:%M:%S') == datetime.datetime.strptime(calendarEvent['start']['dateTime'], '%Y-%m-%dT%H:%i:%s+02:00') and
+        datetime.datetime.strptime(game['date'], '%Y-%m-%d %H:%M:%S') == datetime.datetime.strptime(calendarEvent['start']['dateTime'], '%Y-%m-%dT%H:%M:%S+02:00') and
         game['gym'] == calendarEvent['location']
     )
 
