@@ -20,7 +20,8 @@ def create_table(conn):
             homeTeam text,
             awayTeam text,
             gym text,
-            result text
+            result text,
+            calendarEventId text DEFAULT NULL
         )
     ''')
 
@@ -51,12 +52,14 @@ for game in games:
         continue
     elements = game.find_all('td')
     gameObj = {
+        'id': elements[2].text + '_' + elements[3].text,
         'day': elements[0].text,
         'date': elements[1].text,
         'homeTeam': elements[2].text,
         'awayTeam': elements[3].text,
         'gym': elements[4].text,
-        'result': elements[5].text
+        'result': elements[5].text,
+        'calendarEventId': None
     }
 
     gamesList.append(gameObj)
@@ -75,9 +78,7 @@ conn = sqlite3.connect(dbPath)
 c = conn.cursor()
 
 for game in gamesList:
-    # Create a unique identifier for each game
-    game_id = game['homeTeam'] + game['awayTeam']
-    game['id'] = game_id
+
 
     c.execute('''
         INSERT OR REPLACE INTO games VALUES (
@@ -87,7 +88,8 @@ for game in gamesList:
             :homeTeam,
             :awayTeam,
             :gym,
-            :result
+            :result,
+            :calendarEventId
         )
     ''', game)
 
