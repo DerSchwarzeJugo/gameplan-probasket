@@ -6,6 +6,7 @@ import requests
 import json
 from bs4 import BeautifulSoup
 from pprint import pprint
+import random
 import os
 import sqlite3
 import logging
@@ -122,15 +123,16 @@ def checkGames():
     createdGamesCount = 0
     updatedGamesCount = 0
     unchangedGamesCount = 0
+
     for game in loadedGames:
-        if game['calendarEventId'] == None:
+        if game['calendarEventId'] == None and game['date'] != None and game['date'] != '':
             updateEvent(game, 'create')
             createdGamesCount += 1
             log(f"Created game with id {game['id']}", "info")
         else:
             # check by field id if game is in calendarevents
             for event in calendarEvents:
-                if (event['id'] == game['calendarEventId']):
+                if (event['id'] == game['calendarEventId'] and game['date'] != None and game['date'] != ''):
                     if not compareGame(game, event):
                         updateEvent(game, 'update')
                         updatedGamesCount += 1
@@ -151,8 +153,8 @@ def createTable(conn):
     c.execute('''
         CREATE TABLE games (
             id text PRIMARY KEY,
-            day text,
-            date DATETIME,
+            day text NULL,
+            date DATETIME NULL,
             league text,
             homeTeam text,
             awayTeam text,
@@ -217,7 +219,7 @@ def updateGames():
             continue
         elements = game.find_all('td')
 
-        id = elements[2].text + '_' + elements[3].text + '_' + elements[4].text
+        id = elements[2].text + '_' + elements[3].text + '_' + elements[4].text + '_' + getRandomNumber()
         id = id.replace(' ', '_').lower()
 
         date = elements[1].text
@@ -321,6 +323,10 @@ def compareGame(game, calendarEvent):
         datetime.datetime.strptime(game['date'], '%Y-%m-%d %H:%M:%S') == datetime.datetime.strptime(calendarEvent['start']['dateTime'], '%Y-%m-%dT%H:%M:%S+02:00') and
         game['gym'] == calendarEvent['location']
     )
+
+
+def getRandomNumber():
+    return str(random.randint(1000, 10000))
 
 
 def setupLogging():
