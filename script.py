@@ -88,7 +88,7 @@ def updateEvent(loadedGame, case = 'update'):
         endDateTime = startDateTime + datetime.timedelta(hours=2)
 
         event = {
-            'summary': f'Basket: {loadedGame["league"]} {loadedGame["homeTeam"]} vs. {loadedGame["awayTeam"]}',
+            'summary': f'{loadedGame["league"]} {loadedGame["homeTeam"]} vs. {loadedGame["awayTeam"]}',
             'location': loadedGame['gym'],
             'start': {
                 'dateTime': startDateTime.isoformat() + '+02:00',
