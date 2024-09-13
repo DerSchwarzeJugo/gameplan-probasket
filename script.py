@@ -344,8 +344,8 @@ def setupLogging():
         encoding='utf-8',  # Use utf-8 encoding for the log files
     )
     
-    # Set the format for the log messages
-    formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
+    # Set the format for the log messages, including a timestamp
+    formatter = logging.Formatter('[%(asctime)s] - %(name)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
     
     # Get the root logger and configure it with the handler
