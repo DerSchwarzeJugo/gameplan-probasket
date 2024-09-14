@@ -1,5 +1,6 @@
 # Description: This script is used to update the Google Calendar with the latest basketball games from the ProBasket website for a provided club ID. For a new season, just delete/archive the games.db and allow for a new one to be created. The script will create a new event for each game that does not have a calendar event ID, and update the event if the game data has changed
 
+from config import DEBUG, SCOPES, DBPATH, TEAMCALENDARID
 import datetime
 import os.path
 import requests
@@ -18,13 +19,6 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-
-
-#region Constants
-DEBUG = True
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
-DBPATH = './data/games.db'
-CALENDARID = "925a0d61e624b1742abf37419fb1ff0777c5b40cb1166d8be0c6b42d7f6432a2@group.calendar.google.com"
 
 
 #region Functions
@@ -107,9 +101,9 @@ def updateEvent(loadedGame, case = 'update'):
         }
 
         if case == 'update':
-            event = service.events().patch(calendarId=CALENDARID, eventId=loadedGame['calendarEventId'], body=event).execute()
+            event = service.events().patch(calendarId=TEAMCALENDARID, eventId=loadedGame['calendarEventId'], body=event).execute()
         if case == 'create':
-            event = service.events().insert(calendarId=CALENDARID, body=event).execute()
+            event = service.events().insert(calendarId=TEAMCALENDARID, body=event).execute()
             updateGameDB(loadedGame['id'], event['id'])
 
     except HttpError as error:
@@ -303,7 +297,7 @@ def fetchCalendarEvents():
         service = getService()
         #   now = datetime.datetime.utcnow().isoformat() + "Z"
         # The calendar ID can be found in the settings of the Google Calendar (this is the id of the EB calendar)
-        events_result = service.events().list(calendarId=CALENDARID, maxResults=500, singleEvents=True, orderBy="startTime").execute()
+        events_result = service.events().list(calendarId=TEAMCALENDARID, maxResults=500, singleEvents=True, orderBy="startTime").execute()
         events = events_result.get("items", [])
 
         if not events:

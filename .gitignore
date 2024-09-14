@@ -2,3 +2,5 @@ data/*
 credentials.json
 token.json
 quickstart.py
+config.py
+__pycache__/
