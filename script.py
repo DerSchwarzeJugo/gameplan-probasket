@@ -1,4 +1,4 @@
-from config import DEBUG, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBID, CLUBNAME, CLUBNAMESHORT
+from config import DEBUG, LOGLEVEL, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBID, CLUBNAME, CLUBNAMESHORT
 import datetime
 import os.path
 import requests
@@ -617,7 +617,7 @@ def setupLogging():
     
     # Get the root logger and configure it with the handler
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    logger.setLevel(LOGLEVEL)
     logger.addHandler(handler)
 
 
