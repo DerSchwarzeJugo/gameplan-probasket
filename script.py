@@ -12,6 +12,7 @@ import string
 import os
 import sqlite3
 import logging
+import time
 from logging.handlers import TimedRotatingFileHandler
 
 
@@ -25,10 +26,25 @@ from googleapiclient.errors import HttpError
 #region Functions
 def main():
     setupLogging()
+    logStartTime()
     authenticate()
     updateGames()
     updateCalendars()
     checkGames()
+    logEndTime()
+
+
+def logStartTime():
+    global startTime
+    startTime = time.time()
+    logging.info(f"Start time: {time.ctime(startTime)}")
+
+
+def logEndTime():
+    endTime = time.time()
+    duration = round(endTime - startTime, 1)
+    logging.info(f"End time: {time.ctime(endTime)}")
+    logging.info(f"Duration: {duration} seconds")
 
 
 def authenticate():
