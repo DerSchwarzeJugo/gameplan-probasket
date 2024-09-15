@@ -56,7 +56,7 @@ def authenticate():
             try:
                 creds.refresh(Request())
             except Exception as e:
-                log(f"Error refreshing access token: {e}",'error')
+                logging.error(f"Error refreshing access token: {e}")
                 creds = None
             if not creds:
                 flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
@@ -74,7 +74,7 @@ def getCreds():
             try:
                 creds.refresh(Request())
             except Exception as e:
-                log(f"Error refreshing access token: {e}", 'error')
+                logging.error(f"Error refreshing access token: {e}")
                 creds = None
         if not creds:
             flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
@@ -128,7 +128,7 @@ def updateEvent(loadedGame, field, calendarId, case = 'update'):
         return True
 
     except HttpError as error:
-        log(f"An error occurred: {error}", "error")
+        logging.error(f"An error occurred: {error}")
         return False
 
 
@@ -155,11 +155,11 @@ def checkGames():
                 updateGameDB(game['id'], 'teamCalendarId', calendar['googleCalendarId'])
                 game['teamCalendarId'] = calendar['googleCalendarId']
             else:
-                log(f"Calendar for league {game['league']} not found", "warning")
+                logging.warning(f"Calendar for league {game['league']} not found")
                 continue
 
         if game['date'] == None or game['date'] == '':
-            log(f"Game with id {game['id']} has no date set. Unable to create an Calendar Event.", "warning")
+            logging.warning(f"Game with id {game['id']} has no date set. Unable to create an Calendar Event.")
             noDateGamesCount += 1
             continue
 
@@ -168,7 +168,7 @@ def checkGames():
             # create event in club calendar
             updateEvent(game, 'clubCalendarEventId', clubCalendarId, 'create')
             createdClubGamesCount += 1
-            log(f"Created game with id {game['id']}", "info")
+            logging.info(f"Created game with id {game['id']}")
         else:
             # check by field id if game is in calendarevents
             for event in calendarEvents:
@@ -177,7 +177,7 @@ def checkGames():
                         # update event in club calendar
                         updateEvent(game, 'clubCalendarEventId', clubCalendarId, 'update')
                         updatedClubGamesCount += 1
-                        log(f"Updated game with id {game['id']} in Club-Calendar", "info")
+                        logging.info(f"Updated game with id {game['id']} in Club-Calendar")
                     else:
                         unchangedClubGamesCount += 1
                     break
@@ -187,7 +187,7 @@ def checkGames():
             # create event in team calendar
             updateEvent(game, 'teamCalendarEventId', game['teamCalendarId'], 'create')
             createdTeamGamesCount += 1
-            log(f"Created game with id {game['id']}", "info")
+            logging.info(f"Created game with id {game['id']}")
         else:
             # check by field id if game is in calendarevents
             for event in calendarEvents:
@@ -196,18 +196,18 @@ def checkGames():
                         # update event in team calendar
                         updateEvent(game, 'teamCalendarEventId', game['teamCalendarId'], 'update')
                         updatedTeamGamesCount += 1
-                        log(f"Updated game with id {game['id']} in Team-Calendar", "info")
+                        logging.info(f"Updated game with id {game['id']} in Team-Calendar")
                     else:
                         unchangedTeamGamesCount += 1
                     break
 
-    log(f"Games without date: {noDateGamesCount}", "info")
-    log(f"Created Club-Calendar Events: {createdClubGamesCount}", "info")
-    log(f"Updated Club-Calendar Events: {updatedClubGamesCount}", "info")
-    log(f"Unchanged Club-Calendar Events: {unchangedClubGamesCount}", "info")
-    log(f"Created Team-Calendar Events: {createdTeamGamesCount}", "info")
-    log(f"Updated Team-Calendar Events: {updatedTeamGamesCount}", "info")
-    log(f"Unchanged Team-Calendar Events: {unchangedTeamGamesCount}", "info")
+    logging.info(f"Games without date: {noDateGamesCount}")
+    logging.info(f"Created Club-Calendar Events: {createdClubGamesCount}")
+    logging.info(f"Updated Club-Calendar Events: {updatedClubGamesCount}")
+    logging.info(f"Unchanged Club-Calendar Events: {unchangedClubGamesCount}")
+    logging.info(f"Created Team-Calendar Events: {createdTeamGamesCount}")
+    logging.info(f"Updated Team-Calendar Events: {updatedTeamGamesCount}")
+    logging.info(f"Unchanged Team-Calendar Events: {unchangedTeamGamesCount}")
 
 
 def createGameTable(conn):
@@ -519,7 +519,7 @@ def updateGameDB(id, field, value):
     try:
         conn = sqlite3.connect(GAMEDBPATH)
         c = conn.cursor()
-        log(f"Attempting to update game with id {id}: Field {field} with value {value}", "info")
+        logging.info(f"Attempting to update game with id {id}: Field {field} with value {value}")
 
         query = f'''
             UPDATE game
@@ -528,11 +528,11 @@ def updateGameDB(id, field, value):
         '''
         c.execute(query, {'id': id, 'value': value})
 
-        log(f"Rows updated: {c.rowcount}", "info")
+        logging.info(f"Rows updated: {c.rowcount}")
 
         conn.commit()
     except sqlite3.Error as e:
-        log(f"An error occurred: {e}", "error")
+        logging.error(f"An error occurred: {e}")
     finally:
         conn.close()
 
@@ -554,7 +554,7 @@ def createGoogleCalendar(league = None):
 
         return created_calendar['id']
     except HttpError as error:
-        log(f"An error occurred: {error}", "error")
+        logging.error(f"An error occurred: {error}")
 
 
 def fetchCalendarEvents(loadedCalendars):
@@ -576,13 +576,13 @@ def fetchEvents(calendarId):
         events = events_result.get("items", [])
 
         if not events:
-            log("No events found.", "info")
+            logging.info("No events found.")
             return
 
         return events
 
     except HttpError as error:
-      log(f"An error occurred: {error}", "error")
+      logging.error(f"An error occurred: {error}")
 
 
 def compareGame(game, calendarEvent):
@@ -614,27 +614,14 @@ def setupLogging():
         encoding='utf-8',  # Use utf-8 encoding for the log files
     )
     
-    # Set the format for the log messages, including a timestamp
-    formatter = logging.Formatter('[%(asctime)s] - %(name)s - %(levelname)s - %(message)s')
+    # Set the format for the log messages, including a timestamp and function name
+    formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] [%(funcName)s] - %(message)s')
     handler.setFormatter(formatter)
     
     # Get the root logger and configure it with the handler
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     logger.addHandler(handler)
-
-
-def log(message, level="info"):
-    if level == "info":
-        logging.info(message)
-    elif level == "warning":
-        logging.warning(message)
-    elif level == "error":
-        logging.error(message)
-    elif level == "debug":
-        logging.debug(message)
-    else:
-        logging.info("Unknown logging level: " + message)
 
 
 #region Main
