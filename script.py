@@ -1,5 +1,3 @@
-# Description: This script is used to update the Google Calendar with the latest basketball games from the ProBasket website for a provided club ID. For a new season, just delete/archive the games.db and allow for a new one to be created. The script will create a new event for each game that does not have a calendar event ID, and update the event if the game data has changed
-
 from config import DEBUG, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBID, CLUBNAME, CLUBNAMESHORT
 import datetime
 import os.path
@@ -87,7 +85,7 @@ def getCreds():
 
 def getService():
     creds = getCreds()
-    service = build("calendar", "v3", credentials=creds)
+    service = build("calendar", "v3", credentials=creds, cache_discovery=False)
     return service
 
 
@@ -440,7 +438,6 @@ def updateCalendars():
         createCalendarDB(league['league'])
 
 
-
 def createCalendarDB(league=None, isClubCalendar=False):
     # Check if the database file exists before creating the gametable
     if not os.path.exists(CALENDARDBPATH):
@@ -560,23 +557,23 @@ def createGoogleCalendar(league = None):
 def fetchCalendarEvents(loadedCalendars):
     allEvents = []
     for calendar in loadedCalendars:
-        events = fetchEvents(calendar['googleCalendarId'])
+        events = fetchEvents(calendar)
         if events != None:
             allEvents.extend(events)
 
     return allEvents
 
 
-def fetchEvents(calendarId):
+def fetchEvents(calendar):
     try:
         service = getService()
         #   now = datetime.datetime.utcnow().isoformat() + "Z"
         # The calendar ID can be found in the settings of the Google Calendar (this is the id of the EB calendar)
-        events_result = service.events().list(calendarId=calendarId, maxResults=500, singleEvents=True, orderBy="startTime").execute()
+        events_result = service.events().list(calendarId=calendar['googleCalendarId'], maxResults=500, singleEvents=True, orderBy="startTime").execute()
         events = events_result.get("items", [])
 
         if not events:
-            logging.info("No events found.")
+            logging.info(f"No events found for calendar {calendar['league']}")
             return
 
         return events
