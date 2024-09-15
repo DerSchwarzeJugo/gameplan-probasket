@@ -1,16 +1,23 @@
+import sys
+import os
 import sqlite3
+from pprint import pprint
 
-DBPATH = './data/games.db'
-DEBUG = True
+# Add the parent directory to sys.path
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(parent_dir)
+
+from config import DEBUG, GAMEDBPATH
+
 
 def loadGames():
     try:
-        conn = sqlite3.connect(DBPATH)
+        conn = sqlite3.connect(GAMEDBPATH)
         conn.row_factory = sqlite3.Row  # Set row factory to sqlite3.Row
         c = conn.cursor()
 
         c.execute('''
-            SELECT * FROM games
+            SELECT * FROM game
         ''')
 
         games = c.fetchall()
@@ -27,4 +34,4 @@ def loadGames():
     except sqlite3.Error as e:
         print(f"An error occurred: {e}")
 
-print(loadGames())
+pprint(loadGames(), indent=4)
