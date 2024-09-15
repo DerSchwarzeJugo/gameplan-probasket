@@ -1,6 +1,6 @@
 # Description: This script is used to update the Google Calendar with the latest basketball games from the ProBasket website for a provided club ID. For a new season, just delete/archive the games.db and allow for a new one to be created. The script will create a new event for each game that does not have a calendar event ID, and update the event if the game data has changed
 
-from config import DEBUG, SCOPES, DBPATH, TEAMCALENDARID
+from config import DEBUG, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBID, CLUBNAME, CLUBNAMESHORT
 import datetime
 import os.path
 import requests
@@ -8,6 +8,7 @@ import json
 from bs4 import BeautifulSoup
 from pprint import pprint
 import random
+import string
 import os
 import sqlite3
 import logging
@@ -26,6 +27,7 @@ def main():
     setupLogging()
     authenticate()
     updateGames()
+    updateCalendars()
     checkGames()
 
 
@@ -73,8 +75,8 @@ def getService():
     return service
 
 
-def updateEvent(loadedGame, case = 'update'):
-    # The calendar ID can be found in the settings of the Google Calendar (this is the id of the EB calendar)
+def updateEvent(loadedGame, field, calendarId, case = 'update'):
+    # The calendar ID can be found in the settings of the Google Calendar 
     try:
         service = getService()
 
@@ -101,51 +103,104 @@ def updateEvent(loadedGame, case = 'update'):
         }
 
         if case == 'update':
-            event = service.events().patch(calendarId=TEAMCALENDARID, eventId=loadedGame['calendarEventId'], body=event).execute()
+            event = service.events().patch(calendarId=calendarId, eventId=loadedGame[{field}], body=event).execute()
         if case == 'create':
-            event = service.events().insert(calendarId=TEAMCALENDARID, body=event).execute()
-            updateGameDB(loadedGame['id'], event['id'])
+            event = service.events().insert(calendarId=calendarId, body=event).execute()
+            # Update the game with the new event ID
+            updateGameDB(loadedGame['id'], field, event['id'])
+        
+        return True
 
     except HttpError as error:
         log(f"An error occurred: {error}", "error")
+        return False
 
 
 def checkGames():
     loadedGames = loadGames() or []
-    calendarEvents = fetchCalendarEvents() or []
+    loadedCalendars = loadCalendars() or []
+    calendarEvents = fetchCalendarEvents(loadedCalendars) or []
+    clubCalendarId = loadCalendar('isClubCalendar', 1)['googleCalendarId']
     
-    createdGamesCount = 0
-    updatedGamesCount = 0
-    unchangedGamesCount = 0
+    createdClubGamesCount = 0
+    updatedClubGamesCount = 0
+    unchangedClubGamesCount = 0
+    createdTeamGamesCount = 0
+    updatedTeamGamesCount = 0
+    unchangedTeamGamesCount = 0
+    noDateGamesCount = 0
 
     for game in loadedGames:
-        if game['calendarEventId'] == None and game['date'] != None and game['date'] != '':
-            updateEvent(game, 'create')
-            createdGamesCount += 1
+        # Check if the game has a related teamCalendar id
+        if game['teamCalendarId'] == None:
+            # Calendars should already be created, so we can just check if the calendar exists
+            calendar = checkCalendarExists(game['league'])
+            if calendar != None:
+                updateGameDB(game['id'], 'teamCalendarId', calendar['googleCalendarId'])
+                game['teamCalendarId'] = calendar['googleCalendarId']
+            else:
+                log(f"Calendar for league {game['league']} not found", "warning")
+                continue
+
+        if game['date'] == None or game['date'] == '':
+            log(f"Game with id {game['id']} has no date set. Unable to create an Calendar Event.", "warning")
+            noDateGamesCount += 1
+            continue
+
+        # Club-Calendar
+        if game['clubCalendarEventId'] == None:
+            # create event in club calendar
+            updateEvent(game, 'clubCalendarEventId', clubCalendarId, 'create')
+            createdClubGamesCount += 1
             log(f"Created game with id {game['id']}", "info")
         else:
             # check by field id if game is in calendarevents
             for event in calendarEvents:
-                if (event['id'] == game['calendarEventId'] and game['date'] != None and game['date'] != ''):
+                if (event['id'] == game['clubCalendarEventId']):
                     if not compareGame(game, event):
-                        updateEvent(game, 'update')
-                        updatedGamesCount += 1
-                        log(f"Updated game with id {game['id']}", "info")
+                        # update event in club calendar
+                        updateEvent(game, 'clubCalendarEventId', clubCalendarId, 'update')
+                        updatedClubGamesCount += 1
+                        log(f"Updated game with id {game['id']} in Club-Calendar", "info")
                     else:
-                        unchangedGamesCount += 1
+                        unchangedClubGamesCount += 1
                     break
-    
-    log(f"Created {createdGamesCount} games and updated {updatedGamesCount} games", "info")
-    log(f"Unchanged games: {unchangedGamesCount}", "info")
+
+        # Team-Calendar
+        if game['teamCalendarEventId'] == None:
+            # create event in team calendar
+            updateEvent(game, 'teamCalendarEventId', game['teamCalendarId'], 'create')
+            createdTeamGamesCount += 1
+            log(f"Created game with id {game['id']}", "info")
+        else:
+            # check by field id if game is in calendarevents
+            for event in calendarEvents:
+                if (event['id'] == game['teamCalendarEventId']):
+                    if not compareGame(game, event):
+                        # update event in team calendar
+                        updateEvent(game, 'teamCalendarEventId', game['teamCalendarId'], 'update')
+                        updatedTeamGamesCount += 1
+                        log(f"Updated game with id {game['id']} in Team-Calendar", "info")
+                    else:
+                        unchangedTeamGamesCount += 1
+                    break
+
+    log(f"Games without date: {noDateGamesCount}", "info")
+    log(f"Created Club-Calendar Events: {createdClubGamesCount}", "info")
+    log(f"Updated Club-Calendar Events: {updatedClubGamesCount}", "info")
+    log(f"Unchanged Club-Calendar Events: {unchangedClubGamesCount}", "info")
+    log(f"Created Team-Calendar Events: {createdTeamGamesCount}", "info")
+    log(f"Updated Team-Calendar Events: {updatedTeamGamesCount}", "info")
+    log(f"Unchanged Team-Calendar Events: {unchangedTeamGamesCount}", "info")
 
 
-def createTable(conn):
+def createGameTable(conn):
     # Create a cursor object
     c = conn.cursor()
 
     # Create table
     c.execute('''
-        CREATE TABLE games (
+        CREATE TABLE game (
             id text PRIMARY KEY,
             day text NULL,
             date DATETIME NULL,
@@ -154,19 +209,37 @@ def createTable(conn):
             awayTeam text,
             gym text,
             result text,
-            calendarEventId text NULL
+            clubCalendarEventId text NULL,
+            teamCalendarEventId text NULL,
+            teamCalendarId text,
+            FOREIGN KEY (teamCalendarId) REFERENCES calendar(id)
+        )
+    ''')
+
+
+def createCalendarTable(conn):
+    # Create a cursor object
+    c = conn.cursor()
+
+    # Create table
+    c.execute('''
+        CREATE TABLE calendar (
+            id text PRIMARY KEY,
+            googleCalendarId text,
+            league text NULL,
+            isClubCalendar boolean
         )
     ''')
 
 
 def loadGames():
     try:
-        conn = sqlite3.connect(DBPATH)
+        conn = sqlite3.connect(GAMEDBPATH)
         conn.row_factory = sqlite3.Row  # Set row factory to sqlite3.Row
         c = conn.cursor()
 
         c.execute('''
-            SELECT * FROM games
+            SELECT * FROM game
         ''')
 
         games = c.fetchall()
@@ -185,10 +258,77 @@ def loadGames():
         return []
 
 
+def loadCalendars():
+    try:
+        conn = sqlite3.connect(CALENDARDBPATH)
+        conn.row_factory = sqlite3.Row  # Set row factory to sqlite3.Row
+        c = conn.cursor()
+
+        c.execute(f'''
+            SELECT * FROM calendar
+        ''')
+
+        calendars = c.fetchall()
+
+        # Convert sqlite3.Row objects to dictionaries
+        calendars = [dict(calendar) for calendar in calendars]
+
+        conn.close()
+        return calendars
+    except sqlite3.Error as e:
+        logging.error(f"An error occurred: {e}")
+        return None
+
+
+def loadCalendar(field, value):
+    try:
+        conn = sqlite3.connect(CALENDARDBPATH)
+        conn.row_factory = sqlite3.Row  # Set row factory to sqlite3.Row
+        c = conn.cursor()
+
+        c.execute(f'''
+            SELECT * FROM calendar
+            WHERE {field} = :value
+        ''', {'value': value})
+
+        calendar = c.fetchone()
+
+        # Convert sqlite3.Row object to dictionary
+        calendar = dict(calendar)
+
+        conn.close()
+        return calendar
+    except sqlite3.Error as e:
+        logging.error(f"An error occurred: {e}")
+        return None
+
+
+def findLeagues():
+    try:
+        conn = sqlite3.connect(GAMEDBPATH)
+        conn.row_factory = sqlite3.Row  # Set row factory to sqlite3.Row
+        c = conn.cursor()
+
+        c.execute('''
+            SELECT DISTINCT league FROM game
+        ''')
+
+        leagues = c.fetchall()
+
+        # Convert sqlite3.Row objects to dictionaries
+        leagues = [dict(league) for league in leagues]
+
+        conn.close()
+        return leagues
+    except sqlite3.Error as e:
+        logging.error(f"An error occurred: {e}")
+        return []
+
+
 def updateGames():
     url = 'https://probasket.ch/season.php'
     params = {
-        'club': '163',
+        'club': PROBASKETCLUBID,
         'jsoncallback': 'jsoncallback'
     }
 
@@ -213,7 +353,7 @@ def updateGames():
             continue
         elements = game.find_all('td')
 
-        id = elements[2].text + '_' + elements[3].text + '_' + elements[4].text + '_' + getRandomNumber()
+        id = elements[2].text + '_' + elements[3].text + '_' + elements[4].text + '_' + getRandom()
         id = id.replace(' ', '_').lower()
 
         date = elements[1].text
@@ -228,34 +368,36 @@ def updateGames():
             'awayTeam': elements[4].text,
             'gym': elements[5].text,
             'result': elements[6].text,
-            'calendarEventId': None
+            'clubCalendarEventId': None,
+            'teamCalendarEventId': None,
+            'teamCalendarId': None
         }
 
         gamesList.append(gameObj)
 
     # pprint(gamesList, indent=4)
 
-    # Check if the database file exists before creating the table
-    if not os.path.exists(DBPATH):
+    # Check if the database file exists before creating the gametable
+    if not os.path.exists(GAMEDBPATH):
         # Create a connection to the SQLite database
-        conn = sqlite3.connect(DBPATH)
-        createTable(conn)
+        conn = sqlite3.connect(GAMEDBPATH)
+        createGameTable(conn)
         conn.close()
 
     # Insert the games into the table
-    conn = sqlite3.connect(DBPATH)
+    conn = sqlite3.connect(GAMEDBPATH)
     c = conn.cursor()
 
     for game in gamesList:
         # Attempt to insert the new game, ignoring the operation if the game already exists
         c.execute('''
-            INSERT OR IGNORE INTO games (id, day, date, league, homeTeam, awayTeam, gym, result)
+            INSERT OR IGNORE INTO game (id, day, date, league, homeTeam, awayTeam, gym, result)
             VALUES (:id, :day, :date, :league, :homeTeam, :awayTeam, :gym, :result)
         ''', game)
 
-        # Update the game if it already exists, excluding the calendarEventId field
+        # Update the game if it already exists, excluding the clubCalendarEventId field
         c.execute('''
-            UPDATE games
+            UPDATE game
             SET day = :day,
                 date = :date,
                 league = :league,
@@ -271,17 +413,104 @@ def updateGames():
     conn.close()
 
 
-def updateGameDB(id, calendarEventId):
-    try:
-        conn = sqlite3.connect(DBPATH)
-        c = conn.cursor()
-        log(f"Attempting to update game with id {id} with calendarEventId {calendarEventId}", "info")
+def updateCalendars():
+    leagues = findLeagues()
+    
+    # create club calendar
+    createCalendarDB(None, True)
 
-        c.execute('''
-            UPDATE games
-            SET calendarEventId = :calendarEventId
+    # create team calendars
+    for league in leagues:
+        createCalendarDB(league['league'])
+
+
+
+def createCalendarDB(league=None, isClubCalendar=False):
+    # Check if the database file exists before creating the gametable
+    if not os.path.exists(CALENDARDBPATH):
+        try:
+            # Create a connection to the SQLite database
+            conn = sqlite3.connect(CALENDARDBPATH)
+            createCalendarTable(conn)
+        except sqlite3.Error as e:
+            print(f"An error occurred: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+    # Check if the league already exists in the database
+    if checkCalendarExists(league):
+        return
+    else:
+        try:
+            # Create a new Google Calendar
+            googleCalendarId = createGoogleCalendar(league)
+
+            # Create a connection to the SQLite database
+            conn = sqlite3.connect(CALENDARDBPATH)
+            c = conn.cursor()
+
+            if (league == None):
+                league = 'club'
+
+            # Insert the new calendar into the table
+            c.execute('''
+                INSERT INTO calendar (id, googleCalendarId, league, isClubCalendar)
+                VALUES (:id, :googleCalendarId, :league, :isClubCalendar)
+            ''', {
+                'id': league + '_' + getRandom(),
+                'googleCalendarId': googleCalendarId,
+                'league': league,
+                'isClubCalendar': isClubCalendar
+            })
+
+            # Commit the changes
+            conn.commit()
+        except sqlite3.Error as e:
+            print(f"An error occurred: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+
+def checkCalendarExists(league = None):
+    try:
+        conn = sqlite3.connect(CALENDARDBPATH)
+        conn.row_factory = sqlite3.Row  # Set row factory to sqlite3.Row
+        c = conn.cursor()
+
+        if league != None:
+            c.execute('''
+                SELECT * FROM calendar
+                WHERE league = :league
+            ''', {'league': league})
+        else:
+            c.execute('''
+                SELECT * FROM calendar
+                WHERE isClubCalendar = 1
+            ''')
+
+        calendar = c.fetchone()
+
+        conn.close()
+        return calendar
+    except sqlite3.Error as e:
+        logging.error(f"An error occurred: {e}")
+        return None
+
+
+def updateGameDB(id, field, value):
+    try:
+        conn = sqlite3.connect(GAMEDBPATH)
+        c = conn.cursor()
+        log(f"Attempting to update game with id {id}: Field {field} with value {value}", "info")
+
+        query = f'''
+            UPDATE game
+            SET {field} = :value
             WHERE id = :id
-        ''', {'id': id, 'calendarEventId': calendarEventId})
+        '''
+        c.execute(query, {'id': id, 'value': value})
 
         log(f"Rows updated: {c.rowcount}", "info")
 
@@ -292,12 +521,42 @@ def updateGameDB(id, calendarEventId):
         conn.close()
 
 
-def fetchCalendarEvents():
+def createGoogleCalendar(league = None):
+    try:
+        service = getService()
+        if league != None:
+            calendarName = CLUBNAMESHORT + ' ' + league
+        else:
+            calendarName = CLUBNAME
+
+        calendar = {
+            'summary': calendarName,
+            'timeZone': 'Europe/Zurich'
+        }
+
+        created_calendar = service.calendars().insert(body=calendar).execute()
+
+        return created_calendar['id']
+    except HttpError as error:
+        log(f"An error occurred: {error}", "error")
+
+
+def fetchCalendarEvents(loadedCalendars):
+    allEvents = []
+    for calendar in loadedCalendars:
+        events = fetchEvents(calendar['googleCalendarId'])
+        if events != None:
+            allEvents.extend(events)
+
+    return allEvents
+
+
+def fetchEvents(calendarId):
     try:
         service = getService()
         #   now = datetime.datetime.utcnow().isoformat() + "Z"
         # The calendar ID can be found in the settings of the Google Calendar (this is the id of the EB calendar)
-        events_result = service.events().list(calendarId=TEAMCALENDARID, maxResults=500, singleEvents=True, orderBy="startTime").execute()
+        events_result = service.events().list(calendarId=calendarId, maxResults=500, singleEvents=True, orderBy="startTime").execute()
         events = events_result.get("items", [])
 
         if not events:
@@ -319,8 +578,9 @@ def compareGame(game, calendarEvent):
     )
 
 
-def getRandomNumber():
-    return str(random.randint(1000, 10000))
+def getRandom():
+    characters = string.ascii_letters + string.digits
+    return ''.join(random.choices(characters, k=8))
 
 
 def setupLogging():
