@@ -56,11 +56,11 @@ def authenticate():
             except Exception as e:
                 logging.error(f"Error refreshing access token: {e}")
                 creds = None
-            if not creds:
-                flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-                creds = flow.run_local_server(port=0)
-                with open("token.json", "w") as token:
-                    token.write(creds.to_json())
+        if not creds:
+            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+            creds = flow.run_console()
+            with open("token.json", "w") as token:
+                token.write(creds.to_json())
 
 
 def getCreds():
