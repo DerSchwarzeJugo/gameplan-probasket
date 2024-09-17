@@ -216,7 +216,6 @@ def createGameTable(conn):
     c.execute('''
         CREATE TABLE game (
             id text PRIMARY KEY,
-            day text NULL,
             date DATETIME NULL,
             league text,
             homeTeam text,
@@ -403,17 +402,20 @@ def updateGames():
     c = conn.cursor()
 
     for game in gamesList:
+        # Remove the 'day' key from the game dictionary if it exists
+        if 'day' in game:
+            del game['day']
+    
         # Attempt to insert the new game, ignoring the operation if the game already exists
         c.execute('''
-            INSERT OR IGNORE INTO game (id, day, date, league, homeTeam, awayTeam, gym, result)
-            VALUES (:id, :day, :date, :league, :homeTeam, :awayTeam, :gym, :result)
+            INSERT OR IGNORE INTO game (id, date, league, homeTeam, awayTeam, gym, result)
+            VALUES (:id, :date, :league, :homeTeam, :awayTeam, :gym, :result)
         ''', game)
-
+    
         # Update the game if it already exists, excluding the clubCalendarEventId field
         c.execute('''
             UPDATE game
-            SET day = :day,
-                date = :date,
+            SET date = :date,
                 league = :league,
                 homeTeam = :homeTeam,
                 awayTeam = :awayTeam,
