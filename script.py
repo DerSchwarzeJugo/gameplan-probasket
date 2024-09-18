@@ -36,6 +36,7 @@ def main():
 def logStartTime():
     global startTime
     startTime = time.time()
+    logging.info("Starting script ------------------------------------------------")
     logging.info(f"Start time: {time.ctime(startTime)}")
 
 
@@ -44,6 +45,7 @@ def logEndTime():
     duration = round(endTime - startTime, 1)
     logging.info(f"End time: {time.ctime(endTime)}")
     logging.info(f"Duration: {duration} seconds")
+    logging.info("Ending script ------------------------------------------------")
 
 
 def authenticate():
@@ -402,9 +404,9 @@ def updateGames(club = None):
             # dont replace if we actually play against the team, else replace the name
             # case: SCB vs. EB
             if not gameObj['homeTeam'].startswith(CLUBNAME):
-                gameObj['awayTeam'].replace(replacement, CLUBNAME)
+                gameObj['awayTeam'] = gameObj['awayTeam'].replace(replacement, CLUBNAME)
             if not gameObj['awayTeam'].startswith(CLUBNAME):
-                gameObj['homeTeam'].replace(replacement, CLUBNAME)
+                gameObj['homeTeam'] = gameObj['homeTeam'].replace(replacement, CLUBNAME)
             
 
         gamesList.append(gameObj)
