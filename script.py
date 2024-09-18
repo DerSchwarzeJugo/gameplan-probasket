@@ -1,4 +1,4 @@
-from config import DEBUG, LOGLEVEL, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBS, CLUBNAME, CLUBNAMESHORT, CLUBGAMESURL, NAMEREPLACEMENTS
+from config import DEBUG, LOGLEVEL, LOGPATH, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBS, CLUBNAME, CLUBNAMESHORT, CLUBGAMESURL, NAMEREPLACEMENTS
 import time
 import datetime
 import pytz
@@ -555,12 +555,11 @@ def logEndTime():
     logging.info("Ending script ------------------------------------------------")
 
 def setupLogging():
-    log_directory = './data/log/'
-    if not os.path.exists(log_directory):
-        os.makedirs(log_directory)
+    if not os.path.exists(LOGPATH):
+        os.makedirs(LOGPATH)
     
     handler = TimedRotatingFileHandler(
-        filename=os.path.join(log_directory, 'app.log'),
+        filename=os.path.join(LOGPATH, 'app.log'),
         when='midnight',
         interval=1,
         backupCount=30,
