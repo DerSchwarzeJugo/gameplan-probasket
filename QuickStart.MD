@@ -8,7 +8,6 @@ i.e looking like this
 -----------------------------------------------------------------
 import logging
 
-#region Constants
 DEBUG = False
 LOGLEVEL = logging.INFO
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
