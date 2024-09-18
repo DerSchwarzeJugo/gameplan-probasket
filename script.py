@@ -283,14 +283,14 @@ def checkGames():
         if game['clubCalendarEventId'] == None:
             updateEvent(game, 'clubCalendarEventId', clubCalendarId, 'create')
             createdClubGamesCount += 1
-            logging.info(f"Created game with id {game['id']}")
+            logging.debug(f"Created game with id {game['id']}")
         else:
             for event in calendarEvents:
                 if (event['id'] == game['clubCalendarEventId']):
                     if not compareGame(game, event):
                         updateEvent(game, 'clubCalendarEventId', clubCalendarId, 'update')
                         updatedClubGamesCount += 1
-                        logging.info(f"Updated game with id {game['id']} in Club-Calendar")
+                        logging.debug(f"Updated game with id {game['id']} in Club-Calendar")
                     else:
                         unchangedClubGamesCount += 1
                     break
@@ -298,14 +298,14 @@ def checkGames():
         if game['teamCalendarEventId'] == None:
             updateEvent(game, 'teamCalendarEventId', game['teamCalendarId'], 'create')
             createdTeamGamesCount += 1
-            logging.info(f"Created game with id {game['id']}")
+            logging.debug(f"Created game with id {game['id']}")
         else:
             for event in calendarEvents:
                 if (event['id'] == game['teamCalendarEventId']):
                     if not compareGame(game, event):
                         updateEvent(game, 'teamCalendarEventId', game['teamCalendarId'], 'update')
                         updatedTeamGamesCount += 1
-                        logging.info(f"Updated game with id {game['id']} in Team-Calendar")
+                        logging.debug(f"Updated game with id {game['id']} in Team-Calendar")
                     else:
                         unchangedTeamGamesCount += 1
                     break
@@ -344,7 +344,7 @@ def updateGameDB(id, field, value):
     try:
         conn = sqlite3.connect(GAMEDBPATH)
         c = conn.cursor()
-        logging.info(f"Attempting to update game with id {id}: Field {field} with value {value}")
+        logging.debug(f"Attempting to update game with id {id}: Field {field} with value {value}")
 
         query = f'''
             UPDATE game
@@ -353,7 +353,7 @@ def updateGameDB(id, field, value):
         '''
         c.execute(query, {'id': id, 'value': value})
 
-        logging.info(f"Rows updated: {c.rowcount}")
+        logging.debug(f"Rows updated: {c.rowcount}")
 
         conn.commit()
     except sqlite3.Error as e:
