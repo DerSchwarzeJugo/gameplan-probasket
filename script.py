@@ -1,4 +1,4 @@
-from config import DEBUG, LOGLEVEL, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBID, CLUBNAME, CLUBNAMESHORT
+from config import DEBUG, LOGLEVEL, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBS, CLUBNAME, CLUBNAMESHORT, CLUBGAMESURL, NAMEREPLACEMENTS
 import datetime
 import os.path
 import requests
@@ -26,7 +26,8 @@ def main():
     setupLogging()
     logStartTime()
     authenticate()
-    updateGames()
+    for club in PROBASKETCLUBS:
+        updateGames(club)
     updateCalendars()
     checkGames()
     logEndTime()
@@ -338,13 +339,18 @@ def findLeagues():
         return []
 
 
-def updateGames():
-    url = 'https://probasket.ch/season.php'
+def updateGames(club = None):
+
+    if club == None:
+        logging.error("No club provided")
+        return
+
+    url = CLUBGAMESURL
     params = {
-        'club': PROBASKETCLUBID,
+        'club': club['clubId'],
         'jsoncallback': 'jsoncallback'
     }
-
+        
     response = requests.get(url, params=params)
 
     # The response is expected to be in JSONP format, which is essentially a function call in JavaScript.
@@ -366,6 +372,11 @@ def updateGames():
             continue
         elements = game.find_all('td')
 
+        league = elements[2].text
+        if club['includeAll'] == False:
+            if league not in club['leagues']:
+                continue
+
         id = elements[2].text + '_' + elements[3].text + '_' + elements[4].text + '_' + getRandom()
         id = id.replace(' ', '_').lower()
 
@@ -376,7 +387,7 @@ def updateGames():
             'id': id,
             'day': elements[0].text,
             'date': dateObj,
-            'league': elements[2].text,
+            'league': league,
             'homeTeam': elements[3].text,
             'awayTeam': elements[4].text,
             'gym': elements[5].text,
@@ -385,6 +396,16 @@ def updateGames():
             'teamCalendarEventId': None,
             'teamCalendarId': None
         }
+
+        # Replace any name replacements
+        for replacement in NAMEREPLACEMENTS:
+            # dont replace if we actually play against the team, else replace the name
+            # case: SCB vs. EB
+            if not gameObj['homeTeam'].startswith(CLUBNAME):
+                gameObj['awayTeam'].replace(replacement, CLUBNAME)
+            if not gameObj['awayTeam'].startswith(CLUBNAME):
+                gameObj['homeTeam'].replace(replacement, CLUBNAME)
+            
 
         gamesList.append(gameObj)
 
