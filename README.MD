@@ -1,5 +1,5 @@
 # Description:
-This script is used to update the Google Calendar with the latest basketball games from the ProBasket website for a provided club ID.
+This script is used to update the Google Calendar with the latest basketball games from the ProBasket website for multiple provided club IDs. There is also the possibility of filtering out specific leagues if necessary. Also there is an automated Names replacement.
 
 The script will create a new event for each game in the Club-Calendar and also a dedicated Team-Calendar. The script will update the events if the game data has changed.
 
