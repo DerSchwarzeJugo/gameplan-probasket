@@ -1,5 +1,7 @@
 from config import DEBUG, LOGLEVEL, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBS, CLUBNAME, CLUBNAMESHORT, CLUBGAMESURL, NAMEREPLACEMENTS
+import time
 import datetime
+import pytz
 import os.path
 import requests
 import json
@@ -10,7 +12,6 @@ import string
 import os
 import sqlite3
 import logging
-import time
 from logging.handlers import TimedRotatingFileHandler
 
 
@@ -92,35 +93,42 @@ def getService():
     return service
 
 
-def updateEvent(loadedGame, field, calendarId, case = 'update'):
+def updateEvent(loadedGame, field, calendarId, case='update'):
     # The calendar ID can be found in the settings of the Google Calendar 
     try:
         service = getService()
 
+        # Parse the date string into a naive datetime object
         startDateTime = datetime.datetime.strptime(loadedGame['date'], '%Y-%m-%d %H:%M:%S')
+
+        # Define the Europe/Zurich timezone
+        zurich_tz = pytz.timezone('Europe/Zurich')
+
+        # Localize the naive datetime object to the Europe/Zurich timezone
+        startDateTime = zurich_tz.localize(startDateTime)
         endDateTime = startDateTime + datetime.timedelta(hours=2)
 
         event = {
             'summary': f'{loadedGame["league"]} {loadedGame["homeTeam"]} vs. {loadedGame["awayTeam"]}',
             'location': loadedGame['gym'],
             'start': {
-                'dateTime': startDateTime.isoformat() + '+02:00',
+                'dateTime': startDateTime.isoformat(),
                 'timeZone': 'Europe/Zurich',
             },
             'end': {
-                'dateTime': endDateTime.isoformat() + '+02:00',
+                'dateTime': endDateTime.isoformat(),
                 'timeZone': 'Europe/Zurich',
             },
             'reminders': {
                 'useDefault': False,
                 'overrides': [
-                {'method': 'popup', 'minutes': 120},
+                    {'method': 'popup', 'minutes': 120},
                 ],
             },
         }
 
         if case == 'update':
-            event = service.events().patch(calendarId=calendarId, eventId=loadedGame[{field}], body=event).execute()
+            event = service.events().patch(calendarId=calendarId, eventId=loadedGame[field], body=event).execute()
         if case == 'create':
             event = service.events().insert(calendarId=calendarId, body=event).execute()
             # Update the game with the new event ID
@@ -464,14 +472,14 @@ def updateCalendars():
 
 
 def createCalendarDB(league=None, isClubCalendar=False):
-    # Check if the database file exists before creating the gametable
+    # Check if the database file exists before creating the calendartable
     if not os.path.exists(CALENDARDBPATH):
         try:
             # Create a connection to the SQLite database
             conn = sqlite3.connect(CALENDARDBPATH)
             createCalendarTable(conn)
         except sqlite3.Error as e:
-            print(f"An error occurred: {e}")
+            logging.error(f"An error occurred: {e}")
         finally:
             if conn:
                 conn.close()
@@ -505,7 +513,7 @@ def createCalendarDB(league=None, isClubCalendar=False):
             # Commit the changes
             conn.commit()
         except sqlite3.Error as e:
-            print(f"An error occurred: {e}")
+            logging.error(f"An error occurred: {e}")
         finally:
             if conn:
                 conn.close()
