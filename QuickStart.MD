@@ -6,6 +6,7 @@ Create a config.py with the Variables imported in the script.
 
 i.e looking like this
 -----------------------------------------------------------------
+```
 import logging
 
 DEBUG = False
@@ -22,6 +23,7 @@ NAMEREPLACEMENTS = ['Test']
 CLUBNAME = 'Club-Name'
 CLUBNAMESHORT = 'Short Club-Name'
 CLUBGAMESURL = 'https://probasket.ch/season.php'
+```
 -----------------------------------------------------------------
 The Club Id can be found at https://www.probasket.ch/generator.php
 
