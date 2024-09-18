@@ -28,7 +28,7 @@ CLUBGAMESURL = 'https://probasket.ch/season.php'
 The Club Id can be found at https://www.probasket.ch/generator.php
 
 # Step 3
-Verify that the Paths for the databases exist
+Verify that the Paths for the databases and for logging exists
 
 # Step 4
 Create a Google Cloud Project and activate the Calendar API
