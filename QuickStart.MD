@@ -20,9 +20,11 @@ PROBASKETCLUBS = [
 	{'clubId': 'yyy', 'includeAll': False, 'leagues': ['D2LA']}
 ]
 NAMEREPLACEMENTS = ['Test']
-CLUBNAME = 'Club-Name'
-CLUBNAMESHORT = 'Short Club-Name'
+CLUBNAME = '<Club-Name>'
+CLUBNAMESHORT = '<Short Club-Name>'
 CLUBGAMESURL = 'https://probasket.ch/season.php'
+GOTIFYURL = '<url>'
+GOTIFYTOKEN = '<token>'
 ```
 -----------------------------------------------------------------
 The Club Id can be found at https://www.probasket.ch/generator.php
@@ -35,3 +37,6 @@ Create a Google Cloud Project and activate the Calendar API
 
 # Step 5
 Put the credentials.json and token.json files in the root directory of this project
+
+# Step 6
+If you want you can add sending notifications with gotify

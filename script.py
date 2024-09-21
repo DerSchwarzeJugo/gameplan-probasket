@@ -1,4 +1,4 @@
-from config import DEBUG, LOGLEVEL, LOGPATH, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBS, CLUBNAME, CLUBNAMESHORT, CLUBGAMESURL, NAMEREPLACEMENTS
+from config import DEBUG, LOGLEVEL, LOGPATH, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBS, CLUBNAME, CLUBNAMESHORT, CLUBGAMESURL, NAMEREPLACEMENTS, GOTIFYURL, GOTIFYTOKEN
 import time
 import datetime
 import pytz
@@ -49,7 +49,7 @@ def authenticate():
                 creds = None
         if not creds:
             flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-            creds = flow.run_console()
+            creds = flow.run_local_server(port=0)
             with open("token.json", "w") as token:
                 token.write(creds.to_json())
 
@@ -310,13 +310,24 @@ def checkGames():
                         unchangedTeamGamesCount += 1
                     break
 
-    logging.info(f"Games without date: {noDateGamesCount}")
-    logging.info(f"Created Club-Calendar Events: {createdClubGamesCount}")
-    logging.info(f"Updated Club-Calendar Events: {updatedClubGamesCount}")
-    logging.info(f"Unchanged Club-Calendar Events: {unchangedClubGamesCount}")
-    logging.info(f"Created Team-Calendar Events: {createdTeamGamesCount}")
-    logging.info(f"Updated Team-Calendar Events: {updatedTeamGamesCount}")
-    logging.info(f"Unchanged Team-Calendar Events: {unchangedTeamGamesCount}")
+    logMessages = [
+        f"Games without date: {noDateGamesCount}",
+        f"Created Club-Calendar Events: {createdClubGamesCount}",
+        f"Updated Club-Calendar Events: {updatedClubGamesCount}",
+        f"Unchanged Club-Calendar Events: {unchangedClubGamesCount}",
+        f"Created Team-Calendar Events: {createdTeamGamesCount}",
+        f"Updated Team-Calendar Events: {updatedTeamGamesCount}",
+        f"Unchanged Team-Calendar Events: {unchangedTeamGamesCount}",
+    ]
+
+    notification = ''
+    for message in logMessages:
+        logging.info(message)
+        notification += message + '\n'
+    
+    title = CLUBNAMESHORT + ": Gameplan Update"
+    
+    sendNotification(title, notification)
 
 def loadGames():
     try:
@@ -536,6 +547,33 @@ def compareGame(game, calendarEvent):
 def getRandom():
     characters = string.ascii_letters + string.digits
     return ''.join(random.choices(characters, k=8))
+
+#endregion
+
+#region Notification
+
+def sendNotification(title, message):
+
+    # Payload for the notification
+    payload = {
+        "title": title,
+        "message": message,
+        "priority": 5
+    }
+
+    # Headers for the request
+    headers = {
+        "X-Gotify-Key": GOTIFYTOKEN
+    }
+
+    # Send the POST request to Gotify
+    response = requests.post(GOTIFYURL, json=payload, headers=headers)
+
+    # Check if the request was successful
+    if response.status_code == 200:
+        logging.info("Notification sent successfully!")
+    else:
+        logging.error(f"Failed to send notification: {response.status_code} - {response.text}")
 
 #endregion
 
