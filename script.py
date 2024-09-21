@@ -45,7 +45,9 @@ def authenticate():
             try:
                 creds.refresh(Request())
             except Exception as e:
-                logging.error(f"Error refreshing access token: {e}")
+                logMessage = f"Error refreshing access token: {e}"
+                logging.error(logMessage)
+                sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
                 creds = None
         if not creds:
             flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
@@ -62,7 +64,9 @@ def getCreds():
             try:
                 creds.refresh(Request())
             except Exception as e:
-                logging.error(f"Error refreshing access token: {e}")
+                logMessage = f"Error refreshing access token: {e}"
+                logging.error(logMessage)
+                sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
                 creds = None
         if not creds:
             flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
@@ -94,7 +98,9 @@ def createGoogleCalendar(league = None):
 
         return created_calendar['id']
     except HttpError as error:
-        logging.error(f"An error occurred: {error}")
+        logMessage = f"An error occured: {error}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
 
 def fetchEvents(calendar):
     try:
@@ -109,7 +115,9 @@ def fetchEvents(calendar):
         return events
 
     except HttpError as error:
-      logging.error(f"An error occurred: {error}")
+        logMessage = f"An error occurred: {error}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
 
 def updateEvent(loadedGame, field, calendarId, case='update'):
     try:
@@ -148,7 +156,9 @@ def updateEvent(loadedGame, field, calendarId, case='update'):
         return True
 
     except HttpError as error:
-        logging.error(f"An error occurred: {error}")
+        logMessage = f"An error occurred: {error}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
         return False
 
 def fetchCalendarEvents(loadedCalendars):
@@ -166,7 +176,9 @@ def fetchCalendarEvents(loadedCalendars):
 
 def updateGames(club = None):
     if club == None:
-        logging.error("No club provided")
+        logMessage = f"No club provided"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
         return
 
     url = CLUBGAMESURL
@@ -347,8 +359,10 @@ def loadGames():
 
         conn.close()
         return games
-    except sqlite3.Error as e:
-        logging.error(f"An error occurred: {e}")
+    except sqlite3.Error as error:
+        logMessage = f"An error occured: {error}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
         return []
 
 def updateGameDB(id, field, value):
@@ -367,8 +381,10 @@ def updateGameDB(id, field, value):
         logging.debug(f"Rows updated: {c.rowcount}")
 
         conn.commit()
-    except sqlite3.Error as e:
-        logging.error(f"An error occurred: {e}")
+    except sqlite3.Error as error:
+        logMessage = f"An error occured: {error}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
     finally:
         conn.close()
 
@@ -406,8 +422,10 @@ def createCalendarDB(league=None, isClubCalendar=False):
         try:
             conn = sqlite3.connect(CALENDARDBPATH)
             createCalendarTable(conn)
-        except sqlite3.Error as e:
-            logging.error(f"An error occurred: {e}")
+        except sqlite3.Error as error:
+            logMessage = f"An error occured: {error}"
+            logging.error(logMessage)
+            sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
         finally:
             if conn:
                 conn.close()
@@ -434,8 +452,10 @@ def createCalendarDB(league=None, isClubCalendar=False):
             })
 
             conn.commit()
-        except sqlite3.Error as e:
-            logging.error(f"An error occurred: {e}")
+        except sqlite3.Error as error:
+            logMessage = f"An error occured: {error}"
+            logging.error(logMessage)
+            sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
         finally:
             if conn:
                 conn.close()
@@ -455,8 +475,10 @@ def loadCalendars():
 
         conn.close()
         return calendars
-    except sqlite3.Error as e:
-        logging.error(f"An error occurred: {e}")
+    except sqlite3.Error as error:
+        logMessage = f"An error occured: {error}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
         return None
 
 def loadCalendar(field, value):
@@ -475,8 +497,10 @@ def loadCalendar(field, value):
 
         conn.close()
         return calendar
-    except sqlite3.Error as e:
-        logging.error(f"An error occurred: {e}")
+    except sqlite3.Error as error:
+        logMessage = f"An error occured: {error}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
         return None
 
 def checkCalendarExists(league = None):
@@ -500,8 +524,10 @@ def checkCalendarExists(league = None):
 
         conn.close()
         return calendar
-    except sqlite3.Error as e:
-        logging.error(f"An error occurred: {e}")
+    except sqlite3.Error as error:
+        logMessage = f"An error occured: {error}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
         return None
 
 def createCalendarTable(conn):
@@ -534,8 +560,10 @@ def findLeagues():
 
         conn.close()
         return leagues
-    except sqlite3.Error as e:
-        logging.error(f"An error occurred: {e}")
+    except sqlite3.Error as error:
+        logMessage = f"An error occured: {error}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
         return []
 
 def compareGame(game, calendarEvent):
@@ -553,6 +581,10 @@ def getRandom():
 #region Notification
 
 def sendNotification(title, message):
+
+    if GOTIFYURL == None or GOTIFYTOKEN == None:
+        logging.warning("Gotify URL or Token not set. Skipping notification.")
+        return
 
     # Payload for the notification
     payload = {
