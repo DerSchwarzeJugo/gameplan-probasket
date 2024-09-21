@@ -13,6 +13,7 @@ import os
 import sqlite3
 import logging
 from logging.handlers import TimedRotatingFileHandler
+from dateutil import parser
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -567,8 +568,10 @@ def findLeagues():
         return []
 
 def compareGame(game, calendarEvent):
+    game_date = datetime.datetime.strptime(game['date'], '%Y-%m-%d %H:%M:%S')
+    calendar_event_date = parser.parse(calendarEvent['start']['dateTime'])
     return (
-        datetime.datetime.strptime(game['date'], '%Y-%m-%d %H:%M:%S') == datetime.datetime.strptime(calendarEvent['start']['dateTime'], '%Y-%m-%dT%H:%M:%S+02:00') and
+        game_date == calendar_event_date and
         game['gym'] == calendarEvent['location']
     )
 
@@ -614,7 +617,7 @@ def sendNotification(title, message):
 def logStartTime():
     global startTime
     startTime = time.time()
-    logging.info("Starting script ------------------------------------------------")
+    logging.info("------------------------------------------------")
     logging.info(f"Start time: {time.ctime(startTime)}")
 
 def logEndTime():
