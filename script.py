@@ -310,6 +310,10 @@ def checkGames():
     unchangedTeamGamesCount = 0
     noDateGamesCount = 0
 
+    logging.info(f"Total Calendars loaded: {len(loadedCalendars)}")
+    logging.info(f"Total Games loaded: {len(loadedGames)}")
+    logging.info(f"Total Events loaded: {len(calendarEvents)} (Note: This should be double the amount of games.)")
+
     for game in loadedGames:
         if game['teamCalendarId'] == None:
             calendar = checkCalendarExists(game['league'])
