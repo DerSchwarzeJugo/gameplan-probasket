@@ -210,6 +210,7 @@ def updateGames(club = None):
 
         date = elements[1].text
         dateObj = datetime.datetime.strptime(date, '%d.%m.%Y, %H:%M')
+        dateObj = pytz.timezone('Europe/Zurich').localize(dateObj)
 
         gameObj = {
             'id': id,
@@ -241,31 +242,38 @@ def updateGames(club = None):
         createGameTable(conn)
         conn.close()
 
-    conn = sqlite3.connect(GAMEDBPATH)
-    c = conn.cursor()
+    try:
+        conn = sqlite3.connect(GAMEDBPATH)
+        c = conn.cursor()
 
-    for game in gamesList:
-        if 'day' in game:
-            del game['day']
-    
-        c.execute('''
-            INSERT OR IGNORE INTO game (id, date, league, homeTeam, awayTeam, gym, result)
-            VALUES (:id, :date, :league, :homeTeam, :awayTeam, :gym, :result)
-        ''', game)
-    
-        c.execute('''
-            UPDATE game
-            SET date = :date,
-                league = :league,
-                homeTeam = :homeTeam,
-                awayTeam = :awayTeam,
-                gym = :gym,
-                result = :result
-            WHERE id = :id
-        ''', game)
+        for game in gamesList:
+            if 'day' in game:
+                del game['day']
+        
+            c.execute('''
+                INSERT OR IGNORE INTO game (id, date, league, homeTeam, awayTeam, gym, result)
+                VALUES (:id, :date, :league, :homeTeam, :awayTeam, :gym, :result)
+            ''', game)
+        
+            c.execute('''
+                UPDATE game
+                SET date = :date,
+                    league = :league,
+                    homeTeam = :homeTeam,
+                    awayTeam = :awayTeam,
+                    gym = :gym,
+                    result = :result
+                WHERE id = :id
+            ''', game)
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+    except sqlite3.Error as error:
+        logMessage = f"An error occured: {error}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
+    finally:
+        conn.close()
+        logging.debug(f"Games for club {club['clubId']} updated")
 
 def checkGames():
     loadedGames = loadGames() or []
@@ -292,7 +300,7 @@ def checkGames():
                 continue
 
         if game['date'] == None or game['date'] == '':
-            logging.warning(f"Game with id {game['id']} has no date set. Unable to create an Calendar Event.")
+            logging.warning(f"Game with id {game['id']} has no date set. Unable to create a Calendar Event.")
             noDateGamesCount += 1
             continue
 
@@ -571,7 +579,7 @@ def findLeagues():
         return []
 
 def compareGame(game, calendarEvent):
-    game_date = datetime.datetime.strptime(game['date'], '%Y-%m-%d %H:%M:%S')
+    game_date = parser.parse(game['date'])
     calendar_event_date = parser.parse(calendarEvent['start']['dateTime'])
     logging.info(f"{game_date}")
     logging.info(f"{calendar_event_date}")
