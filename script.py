@@ -231,6 +231,9 @@ def updateGames(club = None):
             if not gameObj['awayTeam'].startswith(CLUBNAME):
                 gameObj['homeTeam'] = gameObj['homeTeam'].replace(replacement, CLUBNAME)
             
+        if 'halle' not in gameObj['gym'].lower():
+            gameObj['gym'] = 'Halle: ' + gameObj['gym']
+
         gamesList.append(gameObj)
 
     if not os.path.exists(GAMEDBPATH):
@@ -570,6 +573,8 @@ def findLeagues():
 def compareGame(game, calendarEvent):
     game_date = datetime.datetime.strptime(game['date'], '%Y-%m-%d %H:%M:%S')
     calendar_event_date = parser.parse(calendarEvent['start']['dateTime'])
+    logging.info(f"{game_date}")
+    logging.info(f"{calendar_event_date}")
     return (
         game_date == calendar_event_date and
         game['gym'] == calendarEvent['location']
