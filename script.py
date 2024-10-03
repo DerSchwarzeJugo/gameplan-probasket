@@ -123,10 +123,10 @@ def fetchEvents(calendar):
 def updateEvent(loadedGame, field, calendarId, case='update'):
     try:
         service = getService()
-
-        startDateTime = datetime.datetime.strptime(loadedGame['date'], '%Y-%m-%d %H:%M:%S')
+        
+        startDateTime = parser.parse(loadedGame['date'])
         zurich_tz = pytz.timezone('Europe/Zurich')
-        startDateTime = zurich_tz.localize(startDateTime)
+        startDateTime = startDateTime.astimezone(zurich_tz)
         endDateTime = startDateTime + datetime.timedelta(hours=2)
 
         event = {
@@ -175,86 +175,97 @@ def fetchCalendarEvents(loadedCalendars):
 
 #region Games
 
-def updateGames(club = None):
-    if club == None:
-        logMessage = f"No club provided"
+def updateGames(club=None):
+    if club is None:
+        logMessage = "No club provided"
         logging.error(logMessage)
         sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
         return
+
+    logging.debug(f"Updating games for club: {club}")
 
     url = CLUBGAMESURL
     params = {
         'club': club['clubId'],
         'jsoncallback': 'jsoncallback'
     }
-        
-    response = requests.get(url, params=params)
-    json_data = response.text[13:-2]
-    data = json.loads(json_data)
-    soup = BeautifulSoup(data['html'], 'html.parser')
-
-    games = soup.find_all('tr')
-    gamesList = []
-    for game in games:
-        if game == games[0]:
-            continue
-        elements = game.find_all('td')
-
-        league = elements[2].text
-        if club['includeAll'] == False:
-            if league not in club['leagues']:
-                continue
-
-        id = elements[2].text + '_' + elements[3].text + '_' + elements[4].text + '_' + getRandom()
-        id = id.replace(' ', '_').lower()
-
-        date = elements[1].text
-        dateObj = datetime.datetime.strptime(date, '%d.%m.%Y, %H:%M')
-        dateObj = pytz.timezone('Europe/Zurich').localize(dateObj)
-
-        gameObj = {
-            'id': id,
-            'day': elements[0].text,
-            'date': dateObj,
-            'league': league,
-            'homeTeam': elements[3].text,
-            'awayTeam': elements[4].text,
-            'gym': elements[5].text,
-            'result': elements[6].text,
-            'clubCalendarEventId': None,
-            'teamCalendarEventId': None,
-            'teamCalendarId': None
-        }
-
-        for replacement in NAMEREPLACEMENTS:
-            if not gameObj['homeTeam'].startswith(CLUBNAME):
-                gameObj['awayTeam'] = gameObj['awayTeam'].replace(replacement, CLUBNAME)
-            if not gameObj['awayTeam'].startswith(CLUBNAME):
-                gameObj['homeTeam'] = gameObj['homeTeam'].replace(replacement, CLUBNAME)
-            
-        if 'halle' not in gameObj['gym'].lower():
-            gameObj['gym'] = 'Halle: ' + gameObj['gym']
-
-        gamesList.append(gameObj)
-
-    if not os.path.exists(GAMEDBPATH):
-        conn = sqlite3.connect(GAMEDBPATH)
-        createGameTable(conn)
-        conn.close()
 
     try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        logging.debug(f"Fetched data: {response.text[:200]}...")  # Log first 200 chars of response
+
+        json_data = response.text[13:-2]
+        data = json.loads(json_data)
+        soup = BeautifulSoup(data['html'], 'html.parser')
+
+        games = soup.find_all('tr')
+        gamesList = []
+        for game in games:
+            if game == games[0]:
+                continue
+            elements = game.find_all('td')
+
+            league = elements[2].text
+            if not club['includeAll'] and league not in club['leagues']:
+                continue
+
+            date = elements[1].text
+            dateObj = None
+            timestamp = None
+            if date:
+                dateObj = datetime.datetime.strptime(date, '%d.%m.%Y, %H:%M')
+                dateObj = pytz.timezone('Europe/Zurich').localize(dateObj)
+                timestamp = dateObj.timestamp()
+
+            gameObj = {
+                'day': elements[0].text,
+                'date': dateObj,
+                'league': league,
+                'homeTeam': elements[3].text,
+                'awayTeam': elements[4].text,
+                'gym': elements[5].text,
+                'result': elements[6].text,
+                'clubCalendarEventId': None,
+                'teamCalendarEventId': None,
+                'teamCalendarId': None
+            }
+
+            # Attention, if timestamp is not defined, the id might not be unique
+            id = league + '_' + gameObj['homeTeam'] + '_' + gameObj['awayTeam'] + '_' + str(timestamp)
+            id = id.replace(' ', '_').lower()
+
+            gameObj['id'] = id
+
+            for replacement in NAMEREPLACEMENTS:
+                if not gameObj['homeTeam'].startswith(CLUBNAME):
+                    gameObj['awayTeam'] = gameObj['awayTeam'].replace(replacement, CLUBNAME)
+                if not gameObj['awayTeam'].startswith(CLUBNAME):
+                    gameObj['homeTeam'] = gameObj['homeTeam'].replace(replacement, CLUBNAME)
+
+            if 'halle' not in gameObj['gym'].lower():
+                gameObj['gym'] = 'Halle: ' + gameObj['gym']
+
+            gamesList.append(gameObj)
+            logging.debug(f"Game object created: {gameObj}")
+
+        if not os.path.exists(GAMEDBPATH):
+            conn = sqlite3.connect(GAMEDBPATH)
+            createGameTable(conn)
+            conn.close()
+
         conn = sqlite3.connect(GAMEDBPATH)
         c = conn.cursor()
 
         for game in gamesList:
             if 'day' in game:
                 del game['day']
-        
+
             c.execute('''
                 INSERT OR IGNORE INTO game (id, date, league, homeTeam, awayTeam, gym, result)
                 VALUES (:id, :date, :league, :homeTeam, :awayTeam, :gym, :result)
             ''', game)
-        
+
             c.execute('''
                 UPDATE game
                 SET date = :date,
@@ -267,13 +278,23 @@ def updateGames(club = None):
             ''', game)
 
         conn.commit()
-    except sqlite3.Error as error:
-        logMessage = f"An error occured: {error}"
+        logging.debug("Changes committed")
+
+    except requests.RequestException as req_error:
+        logMessage = f"Request error: {req_error}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
+    except sqlite3.Error as sql_error:
+        logMessage = f"SQLite error: {sql_error}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
+    except Exception as e:
+        logMessage = f"An unexpected error occurred: {e}"
         logging.error(logMessage)
         sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
     finally:
         conn.close()
-        logging.debug(f"Games for club {club['clubId']} updated")
+        logging.debug(f"Database connection closed for club {club['clubId']}")
 
 def checkGames():
     loadedGames = loadGames() or []
@@ -581,8 +602,6 @@ def findLeagues():
 def compareGame(game, calendarEvent):
     game_date = parser.parse(game['date'])
     calendar_event_date = parser.parse(calendarEvent['start']['dateTime'])
-    logging.info(f"{game_date}")
-    logging.info(f"{calendar_event_date}")
     return (
         game_date == calendar_event_date and
         game['gym'] == calendarEvent['location']
