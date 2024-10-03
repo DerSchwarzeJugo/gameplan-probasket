@@ -303,7 +303,7 @@ def checkGames():
                     if not compareGame(game, event):
                         updateEvent(game, 'clubCalendarEventId', clubCalendarId, 'update')
                         updatedClubGamesCount += 1
-                        logging.debug(f"Updated game with id {game['id']} in Club-Calendar")
+                        logging.info(f"Updated game with id {game['id']} in Club-Calendar to date {game['date']}")
                     else:
                         unchangedClubGamesCount += 1
                     break
@@ -318,7 +318,7 @@ def checkGames():
                     if not compareGame(game, event):
                         updateEvent(game, 'teamCalendarEventId', game['teamCalendarId'], 'update')
                         updatedTeamGamesCount += 1
-                        logging.debug(f"Updated game with id {game['id']} in Team-Calendar")
+                        logging.info(f"Updated game with id {game['id']} in Team-Calendar to date {game['date']}")
                     else:
                         unchangedTeamGamesCount += 1
                     break
