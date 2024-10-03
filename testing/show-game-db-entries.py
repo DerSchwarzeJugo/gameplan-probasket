@@ -18,6 +18,7 @@ def loadGames():
 
         c.execute('''
             SELECT * FROM game
+            Order by date
         ''')
 
         games = c.fetchall()
@@ -30,6 +31,7 @@ def loadGames():
             games = games[:2]
 
         conn.close()
+        print(f"Loaded {len(games)} games from the database.")
         return games
     except sqlite3.Error as e:
         print(f"An error occurred: {e}")
