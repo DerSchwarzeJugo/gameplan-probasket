@@ -1,4 +1,4 @@
-from config import DEBUG, LOGLEVEL, LOGPATH, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBS, CLUBNAME, CLUBNAMESHORT, CLUBGAMESURL, GOTIFYURL, GOTIFYTOKEN
+from config import DEBUG, LOGLEVEL, LOGPATH, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBS, CLUBNAME, CLUBNAMESHORT, CLUBGAMESURL, GOTIFYURL, GOTIFYTOKEN, SERVICEACCOUNTFILE, PERSONALEMAIL
 import time
 import datetime
 import pytz
@@ -13,10 +13,9 @@ from logging.handlers import TimedRotatingFileHandler
 from dateutil import parser
 
 from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from google.oauth2 import service_account
 
 #region Main
 
@@ -36,48 +35,28 @@ def main():
 
 def authenticate():
     creds = None
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    if not creds or not creds.valid:
+    try:
+        # Load the service account credentials
+        creds = service_account.Credentials.from_service_account_file(
+            SERVICEACCOUNTFILE, scopes=SCOPES)
+        
+        # Refresh the token if necessary
         if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-            except Exception as e:
-                logMessage = f"Error refreshing access token: {e}"
-                logging.error(logMessage)
-                sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
-                creds = None
-        if not creds:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-            creds = flow.run_local_server(port=0)
-            with open("token.json", "w") as token:
-                token.write(creds.to_json())
-
-def getCreds():
-    creds = None
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-            except Exception as e:
-                logMessage = f"Error refreshing access token: {e}"
-                logging.error(logMessage)
-                sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
-                creds = None
-        if not creds:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-            creds = flow.run_local_server(port=0)
-            with open("token.json", "w") as token:
-                token.write(creds.to_json())
-
+            creds.refresh(Request())
+    except Exception as e:
+        logMessage = f"Error with service account authentication: {e}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
+        creds = None
+    
     return creds
 
 def getService():
-    creds = getCreds()
-    service = build("calendar", "v3", credentials=creds, cache_discovery=False)
-    return service
+    creds = authenticate()
+    if creds:
+        service = build('calendar', 'v3', credentials=creds, cache_discovery=False)
+        return service
+    return None
 
 def createGoogleCalendar(league = None):
     try:
@@ -167,6 +146,30 @@ def fetchCalendarEvents(loadedCalendars):
             allEvents.extend(events)
 
     return allEvents
+
+def shareCalendars():
+    creds = authenticate()
+    if creds:
+        service = build('calendar', 'v3', credentials=creds)
+        try:
+            calendar_list = service.calendarList().list().execute()
+            calendars = calendar_list.get('items', [])
+            for calendar in calendars:
+                calendar_id = calendar['id']
+                logging.info(f"Sharing calendar ID: {calendar_id} with {PERSONALEMAIL}")
+                
+                rule = {
+                    'scope': {
+                        'type': 'user',
+                        'value': PERSONALEMAIL,
+                    },
+                    'role': 'owner'  # or 'writer' if you don't want to give full control
+                }
+                
+                service.acl().insert(calendarId=calendar_id, body=rule).execute()
+                logging.info(f"Shared calendar ID: {calendar_id} with {PERSONALEMAIL}")
+        except Exception as e:
+            logging.error(f"An error occurred: {e}")
 
 #endregion
 
@@ -454,6 +457,9 @@ def updateCalendars():
 
     for league in leagues:
         createCalendarDB(league['league'])
+
+	# TODO: Add Field to Db to check if calendar has already been shared, and only share if not shared
+    # shareCalendars()
 
 def createCalendarDB(league=None, isClubCalendar=False):
     if not os.path.exists(CALENDARDBPATH):

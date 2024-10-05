@@ -24,6 +24,7 @@ CLUBNAMESHORT = '<Short Club-Name>'
 CLUBGAMESURL = 'https://basketplan.ch/showSearchGames.do'
 GOTIFYURL = '<url>'
 GOTIFYTOKEN = '<token>'
+SERVICEACCOUNTFILE = './service-account.json'
 ```
 -----------------------------------------------------------------
 The Club Id can be found at https://www.probasket.ch/generator.php
@@ -32,10 +33,10 @@ The Club Id can be found at https://www.probasket.ch/generator.php
 Verify that the Paths for the databases and for logging exists
 
 # Step 4
-Create a Google Cloud Project and activate the Calendar API
+Create a Google Cloud Project and activate the Calendar API. Create a Service Account, create Keys for it and download the json file.
 
 # Step 5
-Put the credentials.json file in the root directory of this project
+Put the right path to the credentials file into the config file.
 
 # Step 6
 If you want you can add sending notifications with gotify
