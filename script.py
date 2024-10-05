@@ -216,6 +216,11 @@ def updateGames(club=None):
                 if not club['includeAll'] and league not in club['includeLeagues']:
                     continue
 
+                if club['combineLeagues'] != None:
+                    for combine in club['combineLeagues']:
+                        if league == combine['combine']:
+                            league = combine['into']
+
                 # Set locale to German
                 locale.setlocale(locale.LC_TIME, 'de_DE')
                 date = cells[0].text.strip()
