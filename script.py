@@ -6,8 +6,6 @@ import locale
 import os.path
 import requests
 from bs4 import BeautifulSoup
-import random
-import string
 import os
 import sqlite3
 import logging
