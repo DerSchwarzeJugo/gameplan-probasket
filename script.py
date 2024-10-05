@@ -1,12 +1,11 @@
-from config import DEBUG, LOGLEVEL, LOGPATH, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBS, CLUBNAME, CLUBNAMESHORT, CLUBGAMESURL, NAMEREPLACEMENTS, GOTIFYURL, GOTIFYTOKEN
+from config import DEBUG, LOGLEVEL, LOGPATH, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBS, CLUBNAME, CLUBNAMESHORT, CLUBGAMESURL, GOTIFYURL, GOTIFYTOKEN
 import time
 import datetime
 import pytz
+import locale
 import os.path
 import requests
-import json
 from bs4 import BeautifulSoup
-from pprint import pprint
 import random
 import string
 import os
@@ -185,81 +184,80 @@ def updateGames(club=None):
     logging.debug(f"Updating games for club: {club}")
 
     url = CLUBGAMESURL
+    data = {
+        'actionType': 'searchGames',
+        'from': '01.07.24',
+        'federationId': '10',
+        'clubId': club['clubId'],
+        'maxResult': '500'
+    }
     params = {
-        'club': club['clubId'],
-        'jsoncallback': 'jsoncallback'
+        'perspective': 'de_default'
     }
 
     try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        logging.debug(f"Fetched data: {response.text[:200]}...")  # Log first 200 chars of response
+        response = requests.post(url, data=data, params=params)
 
-        json_data = response.text[13:-2]
-        data = json.loads(json_data)
-        soup = BeautifulSoup(data['html'], 'html.parser')
+        # Check if the request was successful
+        if response.status_code == 200:
+            # Parse the HTML response
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Find the table with the game data
+            table = soup.select_one('#body table.forms')
+            
+            # Extract specific game data from the table rows, skipping the first two rows
+            gamesList = []
+            rows = table.find_all('tr')[2:]  # Skip the first two rows
+            for row in rows:
+                cells = row.find_all('td')
 
-        games = soup.find_all('tr')
-        gamesList = []
-        for game in games:
-            if game == games[0]:
-                continue
-            elements = game.find_all('td')
+                league = cells[3].text.strip()
+                if not club['includeAll'] and league not in club['includeLeagues']:
+                    continue
 
-            league = elements[2].text
-            if not club['includeAll'] and league not in club['leagues']:
-                continue
+                # Set locale to German
+                locale.setlocale(locale.LC_TIME, 'de_DE')
+                date = cells[0].text.strip()
+                dateObj = None
+                if date != '':
+                    # format: Fr 01.07.24 20:00
+                    dateObj = datetime.datetime.strptime(date, '%a %d.%m.%y %H:%M')
+                    dateObj = pytz.timezone('Europe/Zurich').localize(dateObj)
 
-            date = elements[1].text
-            dateObj = None
-            timestamp = None
-            if date:
-                dateObj = datetime.datetime.strptime(date, '%d.%m.%Y, %H:%M')
-                dateObj = pytz.timezone('Europe/Zurich').localize(dateObj)
-                timestamp = dateObj.timestamp()
-
-            gameObj = {
-                'day': elements[0].text,
-                'date': dateObj,
-                'league': league,
-                'homeTeam': elements[3].text,
-                'awayTeam': elements[4].text,
-                'gym': elements[5].text,
-                'result': elements[6].text,
-                'clubCalendarEventId': None,
-                'teamCalendarEventId': None,
-                'teamCalendarId': None
-            }
-
-            # Attention, if timestamp is not defined, the id might not be unique
-            id = league + '_' + gameObj['homeTeam'] + '_' + gameObj['awayTeam'] + '_' + str(timestamp)
-            id = id.replace(' ', '_').lower()
-
-            gameObj['id'] = id
-
-            for replacement in NAMEREPLACEMENTS:
-                if not gameObj['homeTeam'].startswith(CLUBNAME):
-                    gameObj['awayTeam'] = gameObj['awayTeam'].replace(replacement, CLUBNAME)
-                if not gameObj['awayTeam'].startswith(CLUBNAME):
-                    gameObj['homeTeam'] = gameObj['homeTeam'].replace(replacement, CLUBNAME)
-
-            if 'halle' not in gameObj['gym'].lower():
-                gameObj['gym'] = 'Halle: ' + gameObj['gym']
-
-            gamesList.append(gameObj)
-            logging.debug(f"Game object created: {gameObj}")
+                gameData = {
+                    'date': dateObj,
+                    'league': league,
+                    'id': cells[5].text.strip(),
+                    'gym': cells[6].text.strip(),
+                    'homeTeam': cells[7].text.strip(),
+                    'awayTeam': cells[8].text.strip(),
+                    'result': cells[11].text.strip(),
+                }
+                gamesList.append(gameData)
+            
+        else:
+            logMessage = f"Failed to retrieve data from Basketplan. Status code: {response.status_code}"
+            logging.error(logMessage)
+            sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
+            return
 
         if not os.path.exists(GAMEDBPATH):
-            conn = sqlite3.connect(GAMEDBPATH)
-            createGameTable(conn)
-            conn.close()
+            try:
+                conn = sqlite3.connect(GAMEDBPATH)
+                createGameTable(conn)
+            except sqlite3.Error as error:
+                logMessage = f"An error occured while creating Game Table: {error}"
+                logging.error(logMessage)
+                sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
+            finally:
+                if conn:
+                    conn.close()
 
         conn = sqlite3.connect(GAMEDBPATH)
         c = conn.cursor()
 
         for game in gamesList:
-            if 'day' in game:
-                del game['day']
 
             c.execute('''
                 INSERT OR IGNORE INTO game (id, date, league, homeTeam, awayTeam, gym, result)
@@ -312,7 +310,7 @@ def checkGames():
 
     logging.info(f"Total Calendars loaded: {len(loadedCalendars)}")
     logging.info(f"Total Games loaded: {len(loadedGames)}")
-    logging.info(f"Total Events loaded: {len(calendarEvents)} (Note: This should be double the amount of games.)")
+    logging.info(f"Total Events loaded: {len(calendarEvents)}")
 
     for game in loadedGames:
         if game['teamCalendarId'] == None:
@@ -460,7 +458,7 @@ def createCalendarDB(league=None, isClubCalendar=False):
             conn = sqlite3.connect(CALENDARDBPATH)
             createCalendarTable(conn)
         except sqlite3.Error as error:
-            logMessage = f"An error occured: {error}"
+            logMessage = f"An error occured while creating Calendar Table: {error}"
             logging.error(logMessage)
             sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
         finally:
@@ -482,7 +480,7 @@ def createCalendarDB(league=None, isClubCalendar=False):
                 INSERT INTO calendar (id, googleCalendarId, league, isClubCalendar)
                 VALUES (:id, :googleCalendarId, :league, :isClubCalendar)
             ''', {
-                'id': league + '_' + getRandom(),
+                'id': league,
                 'googleCalendarId': googleCalendarId,
                 'league': league,
                 'isClubCalendar': isClubCalendar
@@ -610,10 +608,6 @@ def compareGame(game, calendarEvent):
         game_date == calendar_event_date and
         game['gym'] == calendarEvent['location']
     )
-
-def getRandom():
-    characters = string.ascii_letters + string.digits
-    return ''.join(random.choices(characters, k=8))
 
 #endregion
 
