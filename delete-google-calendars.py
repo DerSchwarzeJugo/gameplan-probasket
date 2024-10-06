@@ -55,7 +55,7 @@ def deleteCalendarFromDatabase(googleCalendarId):
 
             # If the calendar is not in the database, nothing will happen
             query = f'''
-                DELETE FROM calendars
+                DELETE FROM calendar
                 WHERE googleCalendarId = ?
             '''
             c.execute(query, (googleCalendarId))
