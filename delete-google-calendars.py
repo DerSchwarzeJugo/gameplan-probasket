@@ -58,7 +58,7 @@ def deleteCalendarFromDatabase(googleCalendarId):
                 DELETE FROM calendar
                 WHERE googleCalendarId = ?
             '''
-            c.execute(query, (googleCalendarId))
+            c.execute(query, (googleCalendarId,))
 
             logging.debug(f"Rows updated: {c.rowcount}")
 
