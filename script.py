@@ -7,6 +7,7 @@ import os.path
 import requests
 from bs4 import BeautifulSoup
 import os
+import uuid
 import sqlite3
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -105,20 +106,25 @@ def fetchEvents(calendar):
         logging.error(logMessage)
         sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
 
-def bulkUpdateEvents(games, field, calendarId, case='update'):
+def bulkUpdateEvents(games, case='update', clubCalendarId=None):
     service = getGoogleService()
     batch = service.new_batch_http_request()
 
     results = []
+    gameMap = {}
 
     def callback(request_id, response, exception):
         if exception is not None:
             results.append({'request_id': request_id, 'status': 'failed', 'error': str(exception)})
         else:
-            results.append({'request_id': request_id, 'status': 'success', 'response': response})
+            event_id = response.get('id') if response else None
+            results.append({'request_id': request_id, 'status': 'success', 'response': response, 'event_id': event_id})
+            # Update the game in the database with the new event ID
+            game = gameMap[request_id]
+            field = 'teamCalendarEventId' if clubCalendarId is None else 'clubCalendarEventId'
+            updateGameDB(game['id'], field, event_id)
 
     for game in games:
-        # TODO: Handle empty date
         startDateTime = parser.parse(game['date'])
         zurich_tz = pytz.timezone('Europe/Zurich')
         startDateTime = startDateTime.astimezone(zurich_tz)
@@ -143,13 +149,29 @@ def bulkUpdateEvents(games, field, calendarId, case='update'):
             },
         }
 
+        # Generate a unique request_id for each game
+        request_id = str(uuid.uuid4())
+        gameMap[request_id] = game
+
         if case == 'update':
-            batch.add(service.events().patch(calendarId=calendarId, eventId=game[field], body=event), callback=callback)
+            if clubCalendarId is None:
+                batch.add(service.events().patch(calendarId=game['teamCalendarId'], eventId=game['teamCalendarEventId'], body=event), callback=callback, request_id=request_id)
+            else:
+                batch.add(service.events().patch(calendarId=clubCalendarId, eventId=game['clubCalendarEventId'], body=event), callback=callback, request_id=request_id)
         elif case == 'create':
-            batch.add(service.events().insert(calendarId=calendarId, body=event), callback=callback)
+            if clubCalendarId is None:
+                batch.add(service.events().insert(calendarId=game['teamCalendarId'], body=event), callback=callback, request_id=request_id)
+            else:
+                batch.add(service.events().insert(calendarId=clubCalendarId, body=event), callback=callback, request_id=request_id)
 
     batch.execute()
     return results
+
+def updateGameDB(game_id, field, event_id):
+    # Implement the logic to update the game in the database with the new event ID
+    # Example: Update the database with the new event ID
+    # db.update_game(game_id, {field: event_id})
+    pass
 
 def fetchCalendarEvents(loadedCalendars):
     allEvents = []
@@ -193,6 +215,25 @@ def shareCalendars():
                 updateCalendarDBByGoogleId(calendar_id, 'isShared', 1)
         except Exception as e:
             logging.error(f"An error occurred: {e}")
+
+def bulkDeleteCalendarEvents(games, clubCalendarId):
+    service = getGoogleService()
+    batch = service.new_batch_http_request()
+
+    results = []
+
+    def callback(request_id, response, exception):
+        if exception is not None:
+            results.append({'request_id': request_id, 'status': 'failed', 'error': str(exception)})
+        else:
+            results.append({'request_id': request_id, 'status': 'success', 'response': response})
+
+    for game in games:
+        batch.add(service.events().delete(calendarId=game['teamCalendarId'], eventId=game['teamCalendarEventId']), callback=callback)
+        batch.add(service.events().delete(calendarId=clubCalendarId, eventId=game['clubCalendarEventId']), callback=callback)
+
+    batch.execute()
+    return results
 
 #endregion
 
@@ -345,6 +386,7 @@ def checkGames():
     clubGamesToUpdate = []
     teamGamesToCreate = []
     teamGamesToUpdate = []
+    gamesToDelete = []
 
     for game in loadedGames:
         if game['teamCalendarId'] == None:
@@ -357,8 +399,9 @@ def checkGames():
                 continue
 
         if game['date'] == None or game['date'] == '':
-            logging.warning(f"Game with id {game['id']} has no date set. Unable to create a Calendar Event.")
+            logging.warning(f"Game with id {game['id']} has no date set. Unable to create or update a Calendar Event.")
             noDateGamesCount += 1
+            gamesToDelete.append(game)
             continue
 
         if game['clubCalendarEventId'] == None:
@@ -384,21 +427,26 @@ def checkGames():
                     break
 
     # Bulk update club calendar events
-    clubCreateResults = bulkUpdateEvents(clubGamesToCreate, 'clubCalendarEventId', clubCalendarId, 'create')
-    clubUpdateResults = bulkUpdateEvents(clubGamesToUpdate, 'clubCalendarEventId', clubCalendarId, 'update')
+    clubCreateResults = bulkUpdateEvents(clubGamesToCreate, 'create', clubCalendarId)
+    clubUpdateResults = bulkUpdateEvents(clubGamesToUpdate, 'update', clubCalendarId)
 
     # Bulk update team calendar events
-    teamCreateResults = bulkUpdateEvents(teamGamesToCreate, 'teamCalendarEventId', game['teamCalendarId'], 'create')
-    teamUpdateResults = bulkUpdateEvents(teamGamesToUpdate, 'teamCalendarEventId', game['teamCalendarId'], 'update')
+    teamCreateResults = bulkUpdateEvents(teamGamesToCreate, 'create')
+    teamUpdateResults = bulkUpdateEvents(teamGamesToUpdate, 'update')
+
+    # Bulk delete calendar events
+    deleteResults = bulkDeleteCalendarEvents(gamesToDelete, clubCalendarId)
 
     # Update counters based on results
     createdClubGamesCount += len(clubCreateResults)
     updatedClubGamesCount += len(clubUpdateResults)
     createdTeamGamesCount += len(teamCreateResults)
     updatedTeamGamesCount += len(teamUpdateResults)
+    deletedGamesCount = len(deleteResults)
 
     logMessages = [
         f"Games without date: {noDateGamesCount}",
+        f"Deleted Games: {deletedGamesCount}",
         f"Created Club-Calendar Events: {createdClubGamesCount}",
         f"Updated Club-Calendar Events: {updatedClubGamesCount}",
         f"Unchanged Club-Calendar Events: {unchangedClubGamesCount}",
@@ -668,9 +716,6 @@ def findLeagues():
         return []
 
 def compareGame(game, calendarEvent):
-    if game['date'] is None or calendarEvent['start']['dateTime'] is None:
-        return False
-    
     gameDate = parser.parse(game['date'])
     calendarEventDate = parser.parse(calendarEvent['start']['dateTime'])
     
