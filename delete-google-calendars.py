@@ -1,5 +1,5 @@
 from config import CALENDARDBPATH
-from script import authenticate, getGoogleService, loadCalendar, setupLogging
+from script import authenticate, getGoogleService, setupLogging
 import sqlite3
 import logging
 
@@ -7,23 +7,42 @@ import logging
 def main():
     setupLogging()
     authenticate()
-    deleteGoogleCalendars()
+    # Prompt the user for confirmation
+    confirmation = input("Are you sure you want to delete all Google calendars? This is not reversible!\nType 'yes' to confirm: ")
+    
+    # Check the user's response
+    if confirmation.lower() == 'yes':
+        calCount = deleteGoogleCalendars()
+        logMessage = f"Deleted {calCount} calendars."
+        print(logMessage)
+        logging.info(logMessage)
+    else:
+        logMessage = "Operation cancelled. No calendars were deleted."
+        print(logMessage)
+        logging.info(logMessage)
 
 
 def deleteGoogleCalendars():
     service = getGoogleService()
-    page_token = None
+    pageToken = None
+    deletedCalendars = 0
+
     while True:
-        calendarList = service.calendarList().list(pageToken=page_token).execute()
+        calendarList = service.calendarList().list(pageToken=pageToken).execute()
+
+        if (len(calendarList['items']) == 0):
+            logging.info("No calendars found.")
+
         for cal in calendarList['items']:
             service.calendars().delete(calendarId=cal['id']).execute()
+            deleteCalendarFromDatabase(cal['id'])
+            deletedCalendars += 1
 
-            if loadCalendar('googleCalendarId', cal['id']) != None:
-                deleteCalendarFromDatabase(cal['id'])
-
-        page_token = calendarList.get('nextPageToken')
-        if not page_token:
+        pageToken = calendarList.get('nextPageToken')
+        if not pageToken:
             break
+    
+    return deletedCalendars
 
 def deleteCalendarFromDatabase(googleCalendarId):
     # Delete from database
@@ -32,6 +51,7 @@ def deleteCalendarFromDatabase(googleCalendarId):
         c = conn.cursor()
         logging.debug(f"Attempting to delete calendar with Google CalendarID {googleCalendarId} from DB.")
 
+        # If the calendar is not in the database, nothing will happen
         query = f'''
             DELETE FROM calendars
             WHERE googleCalendarId = ?
