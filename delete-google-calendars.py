@@ -2,6 +2,7 @@ from config import CALENDARDBPATH
 from script import authenticate, getGoogleService, setupLogging
 import sqlite3
 import logging
+import os
 
 
 def main():
@@ -46,26 +47,30 @@ def deleteGoogleCalendars():
 
 def deleteCalendarFromDatabase(googleCalendarId):
     # Delete from database
-    try:
-        conn = sqlite3.connect(CALENDARDBPATH)
-        c = conn.cursor()
-        logging.debug(f"Attempting to delete calendar with Google CalendarID {googleCalendarId} from DB.")
+    if os.path.exists(CALENDARDBPATH):
+        try:
+            conn = sqlite3.connect(CALENDARDBPATH)
+            c = conn.cursor()
+            logging.debug(f"Attempting to delete calendar with Google CalendarID {googleCalendarId} from DB.")
 
-        # If the calendar is not in the database, nothing will happen
-        query = f'''
-            DELETE FROM calendars
-            WHERE googleCalendarId = ?
-        '''
-        c.execute(query, (googleCalendarId))
+            # If the calendar is not in the database, nothing will happen
+            query = f'''
+                DELETE FROM calendars
+                WHERE googleCalendarId = ?
+            '''
+            c.execute(query, (googleCalendarId))
 
-        logging.debug(f"Rows updated: {c.rowcount}")
+            logging.debug(f"Rows updated: {c.rowcount}")
 
-        conn.commit()
-    except sqlite3.Error as error:
-        logMessage = f"An error occured: {error}"
-        logging.error(logMessage)
-    finally:
-        conn.close()
+            conn.commit()
+        except sqlite3.Error as error:
+            logMessage = f"An error occured: {error}"
+            logging.error(logMessage)
+        finally:
+            conn.close()
+    else:
+        logMessage = f"Database at path: {CALENDARDBPATH} does not exist"
+        logging.warning(logMessage)
 
 if __name__ == "__main__":
     main()
