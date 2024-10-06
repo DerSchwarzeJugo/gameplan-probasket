@@ -51,7 +51,7 @@ def authenticate():
     
     return creds
 
-def getService():
+def getGoogleService():
     creds = authenticate()
     if creds:
         service = build('calendar', 'v3', credentials=creds, cache_discovery=False)
@@ -60,7 +60,7 @@ def getService():
 
 def createGoogleCalendar(league = None):
     try:
-        service = getService()
+        service = getGoogleService()
         if league != None:
             calendarName = CLUBNAMESHORT + ' ' + league
         else:
@@ -81,7 +81,7 @@ def createGoogleCalendar(league = None):
 
 def fetchEvents(calendar):
     try:
-        service = getService()
+        service = getGoogleService()
         events_result = service.events().list(calendarId=calendar['googleCalendarId'], maxResults=500, singleEvents=True, orderBy="startTime").execute()
         events = events_result.get("items", [])
 
@@ -98,7 +98,7 @@ def fetchEvents(calendar):
 
 def updateEvent(loadedGame, field, calendarId, case='update'):
     try:
-        service = getService()
+        service = getGoogleService()
         
         startDateTime = parser.parse(loadedGame['date'])
         zurich_tz = pytz.timezone('Europe/Zurich')
@@ -155,6 +155,16 @@ def shareCalendars():
             calendar_list = service.calendarList().list().execute()
             calendars = calendar_list.get('items', [])
             for calendar in calendars:
+                dbCalendar = loadCalendar('googleCalendarId', calendar['id'])
+
+                if dbCalendar == None:
+                    logging.warning(f"Calendar ID: {calendar['id']} not found in database")
+                    continue
+
+                if dbCalendar['isShared'] == 1:
+                    logging.debug(f"Calendar ID: {calendar['id']} already shared")
+                    continue
+
                 calendar_id = calendar['id']
                 logging.info(f"Sharing calendar ID: {calendar_id} with {PERSONALEMAIL}")
                 
@@ -163,11 +173,12 @@ def shareCalendars():
                         'type': 'user',
                         'value': PERSONALEMAIL,
                     },
-                    'role': 'owner'  # or 'writer' if you don't want to give full control
+                    'role': 'owner'
                 }
                 
                 service.acl().insert(calendarId=calendar_id, body=rule).execute()
                 logging.info(f"Shared calendar ID: {calendar_id} with {PERSONALEMAIL}")
+                updateCalendarDBByGoogleId(calendar_id, 'isShared', 1)
         except Exception as e:
             logging.error(f"An error occurred: {e}")
 
@@ -336,14 +347,14 @@ def checkGames():
         if game['clubCalendarEventId'] == None:
             updateEvent(game, 'clubCalendarEventId', clubCalendarId, 'create')
             createdClubGamesCount += 1
-            logging.debug(f"Created game with id {game['id']}")
+            logging.debug(f"Created Game Event with id {game['id']}")
         else:
             for event in calendarEvents:
                 if (event['id'] == game['clubCalendarEventId']):
                     if not compareGame(game, event):
                         updateEvent(game, 'clubCalendarEventId', clubCalendarId, 'update')
                         updatedClubGamesCount += 1
-                        logging.info(f"Updated game with id {game['id']} in Club-Calendar to date {game['date']}")
+                        logging.info(f"Updated Game Event with id {game['id']} in Club-Calendar to date {game['date']} and location {game['gym']}")
                     else:
                         unchangedClubGamesCount += 1
                     break
@@ -351,14 +362,14 @@ def checkGames():
         if game['teamCalendarEventId'] == None:
             updateEvent(game, 'teamCalendarEventId', game['teamCalendarId'], 'create')
             createdTeamGamesCount += 1
-            logging.debug(f"Created game with id {game['id']}")
+            logging.debug(f"Created Game Event with id {game['id']}")
         else:
             for event in calendarEvents:
                 if (event['id'] == game['teamCalendarEventId']):
                     if not compareGame(game, event):
                         updateEvent(game, 'teamCalendarEventId', game['teamCalendarId'], 'update')
                         updatedTeamGamesCount += 1
-                        logging.info(f"Updated game with id {game['id']} in Team-Calendar to date {game['date']}")
+                        logging.info(f"Updated Game Event with id {game['id']} in Team-Calendar to date {game['date']} and location {game['gym']}")
                     else:
                         unchangedTeamGamesCount += 1
                     break
@@ -458,8 +469,7 @@ def updateCalendars():
     for league in leagues:
         createCalendarDB(league['league'])
 
-	# TODO: Add Field to Db to check if calendar has already been shared, and only share if not shared
-    # shareCalendars()
+    shareCalendars()
 
 def createCalendarDB(league=None, isClubCalendar=False):
     if not os.path.exists(CALENDARDBPATH):
@@ -581,9 +591,33 @@ def createCalendarTable(conn):
             id text PRIMARY KEY,
             googleCalendarId text,
             league text NULL,
-            isClubCalendar boolean
+            isClubCalendar boolean,
+            isShared boolean DEFAULT 0
         )
     ''')
+
+def updateCalendarDBByGoogleId(id, field, value):
+    try:
+        conn = sqlite3.connect(CALENDARDBPATH)
+        c = conn.cursor()
+        logging.debug(f"Attempting to update calendar with Google CalendarID {id}: Field {field} with value {value}")
+
+        query = f'''
+            UPDATE calendar
+            SET {field} = :value
+            WHERE googleCalendarId = :id
+        '''
+        c.execute(query, {'id': id, 'value': value})
+
+        logging.debug(f"Rows updated: {c.rowcount}")
+
+        conn.commit()
+    except sqlite3.Error as error:
+        logMessage = f"An error occured: {error}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
+    finally:
+        conn.close()
 
 #endregion
 
@@ -611,10 +645,14 @@ def findLeagues():
         return []
 
 def compareGame(game, calendarEvent):
-    game_date = parser.parse(game['date'])
-    calendar_event_date = parser.parse(calendarEvent['start']['dateTime'])
+    if game['date'] is None or calendarEvent['start']['dateTime'] is None:
+        return False
+    
+    gameDate = parser.parse(game['date'])
+    calendarEventDate = parser.parse(calendarEvent['start']['dateTime'])
+    
     return (
-        game_date == calendar_event_date and
+        gameDate == calendarEventDate and
         game['gym'] == calendarEvent['location']
     )
 
