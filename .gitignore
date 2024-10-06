@@ -1,6 +1,7 @@
 data/*
 credentials.json
 token.json
+service-account.json
 quickstart.py
 config.py
 __pycache__/

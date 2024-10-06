@@ -1,25 +1,22 @@
-from config import DEBUG, LOGLEVEL, LOGPATH, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBS, CLUBNAME, CLUBNAMESHORT, CLUBGAMESURL, NAMEREPLACEMENTS, GOTIFYURL, GOTIFYTOKEN
+from config import DEBUG, LOGLEVEL, LOGPATH, SCOPES, GAMEDBPATH, CALENDARDBPATH, PROBASKETCLUBS, CLUBNAME, CLUBNAMESHORT, CLUBGAMESURL, GOTIFYURL, GOTIFYTOKEN, SERVICEACCOUNTFILE, PERSONALEMAIL
 import time
 import datetime
 import pytz
+import locale
 import os.path
 import requests
-import json
 from bs4 import BeautifulSoup
-from pprint import pprint
-import random
-import string
 import os
+import uuid
 import sqlite3
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from dateutil import parser
 
 from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from google.oauth2 import service_account
 
 #region Main
 
@@ -39,53 +36,33 @@ def main():
 
 def authenticate():
     creds = None
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    if not creds or not creds.valid:
+    try:
+        # Load the service account credentials
+        creds = service_account.Credentials.from_service_account_file(
+            SERVICEACCOUNTFILE, scopes=SCOPES)
+        
+        # Refresh the token if necessary
         if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-            except Exception as e:
-                logMessage = f"Error refreshing access token: {e}"
-                logging.error(logMessage)
-                sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
-                creds = None
-        if not creds:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-            creds = flow.run_local_server(port=0)
-            with open("token.json", "w") as token:
-                token.write(creds.to_json())
-
-def getCreds():
-    creds = None
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-            except Exception as e:
-                logMessage = f"Error refreshing access token: {e}"
-                logging.error(logMessage)
-                sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
-                creds = None
-        if not creds:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-            creds = flow.run_local_server(port=0)
-            with open("token.json", "w") as token:
-                token.write(creds.to_json())
-
+            creds.refresh(Request())
+    except Exception as e:
+        logMessage = f"Error with service account authentication: {e}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
+        creds = None
+    
     return creds
 
-def getService():
-    creds = getCreds()
-    service = build("calendar", "v3", credentials=creds, cache_discovery=False)
-    return service
+def getGoogleService():
+    creds = authenticate()
+    if creds:
+        service = build('calendar', 'v3', credentials=creds, cache_discovery=False)
+        return service
+    return None
 
-def createGoogleCalendar(league = None):
+def createGoogleCalendar(league=None):
     try:
-        service = getService()
-        if league != None:
+        service = getGoogleService()
+        if league is not None:
             calendarName = CLUBNAMESHORT + ' ' + league
         else:
             calendarName = CLUBNAME
@@ -97,15 +74,24 @@ def createGoogleCalendar(league = None):
 
         created_calendar = service.calendars().insert(body=calendar).execute()
 
+        # Make the calendar publicly accessible
+        rule = {
+            'scope': {
+                'type': 'default',
+            },
+            'role': 'reader'
+        }
+        service.acl().insert(calendarId=created_calendar['id'], body=rule).execute()
+
         return created_calendar['id']
     except HttpError as error:
-        logMessage = f"An error occured: {error}"
+        logMessage = f"An error occurred: {error}"
         logging.error(logMessage)
         sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
 
 def fetchEvents(calendar):
     try:
-        service = getService()
+        service = getGoogleService()
         events_result = service.events().list(calendarId=calendar['googleCalendarId'], maxResults=500, singleEvents=True, orderBy="startTime").execute()
         events = events_result.get("items", [])
 
@@ -120,18 +106,37 @@ def fetchEvents(calendar):
         logging.error(logMessage)
         sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
 
-def updateEvent(loadedGame, field, calendarId, case='update'):
-    try:
-        service = getService()
-        
-        startDateTime = parser.parse(loadedGame['date'])
+def bulkUpdateEvents(games, case='update', clubCalendarId=None):
+    service = getGoogleService()
+    results = []
+    gameMap = {}
+
+    def callback(request_id, response, exception):
+        if exception is not None:
+            # results.append({'request_id': request_id, 'status': 'failed', 'error': str(exception)})
+            logMessage = f"An error occurred while creating or updating an event: {exception}"
+            logging.error(logMessage)
+            sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
+        else:
+            event_id = response.get('id') if response else None
+            results.append({'request_id': request_id, 'status': 'success', 'response': response, 'event_id': event_id})
+            # Update the game in the database with the new event ID
+            game = gameMap[request_id]
+            field = 'teamCalendarEventId' if clubCalendarId is None else 'clubCalendarEventId'
+            updateGameDB(game['id'], field, event_id)
+
+    # Group games by calendar ID
+    calendar_batches = {}
+
+    for game in games:
+        startDateTime = parser.parse(game['date'])
         zurich_tz = pytz.timezone('Europe/Zurich')
         startDateTime = startDateTime.astimezone(zurich_tz)
         endDateTime = startDateTime + datetime.timedelta(hours=2)
 
         event = {
-            'summary': f'{loadedGame["league"]} {loadedGame["homeTeam"]} vs. {loadedGame["awayTeam"]}',
-            'location': loadedGame['gym'],
+            'summary': f'{game["league"]} {game["homeTeam"]} vs. {game["awayTeam"]}',
+            'location': game['gym'],
             'start': {
                 'dateTime': startDateTime.isoformat(),
                 'timeZone': 'Europe/Zurich',
@@ -148,19 +153,32 @@ def updateEvent(loadedGame, field, calendarId, case='update'):
             },
         }
 
-        if case == 'update':
-            event = service.events().patch(calendarId=calendarId, eventId=loadedGame[field], body=event).execute()
-        if case == 'create':
-            event = service.events().insert(calendarId=calendarId, body=event).execute()
-            updateGameDB(loadedGame['id'], field, event['id'])
-        
-        return True
+        # Generate a unique request_id for each game
+        request_id = str(uuid.uuid4())
+        gameMap[request_id] = game
+        logging.debug(f"Request ID: {request_id} for game ID: {game['id']}")
 
-    except HttpError as error:
-        logMessage = f"An error occurred: {error}"
-        logging.error(logMessage)
-        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
-        return False
+        calendar_id = game['teamCalendarId'] if clubCalendarId is None else clubCalendarId
+
+        if calendar_id not in calendar_batches:
+            calendar_batches[calendar_id] = service.new_batch_http_request()
+
+        if case == 'update':
+            if clubCalendarId is None:
+                calendar_batches[calendar_id].add(service.events().patch(calendarId=game['teamCalendarId'], eventId=game['teamCalendarEventId'], body=event), callback=callback, request_id=request_id)
+            else:
+                calendar_batches[calendar_id].add(service.events().patch(calendarId=clubCalendarId, eventId=game['clubCalendarEventId'], body=event), callback=callback, request_id=request_id)
+        elif case == 'create':
+            if clubCalendarId is None:
+                calendar_batches[calendar_id].add(service.events().insert(calendarId=game['teamCalendarId'], body=event), callback=callback, request_id=request_id)
+            else:
+                calendar_batches[calendar_id].add(service.events().insert(calendarId=clubCalendarId, body=event), callback=callback, request_id=request_id)
+
+    # Execute each batch request separately
+    for calendar_id, batch in calendar_batches.items():
+        batch.execute()
+
+    return results
 
 def fetchCalendarEvents(loadedCalendars):
     allEvents = []
@@ -170,6 +188,83 @@ def fetchCalendarEvents(loadedCalendars):
             allEvents.extend(events)
 
     return allEvents
+
+def shareCalendars():
+    creds = authenticate()
+    if creds:
+        service = build('calendar', 'v3', credentials=creds)
+        try:
+            calendar_list = service.calendarList().list().execute()
+            calendars = calendar_list.get('items', [])
+            for calendar in calendars:
+                dbCalendar = loadCalendar('googleCalendarId', calendar['id'])
+
+                if dbCalendar == None:
+                    logging.warning(f"Calendar ID: {calendar['id']} not found in database")
+                    continue
+
+                if dbCalendar['isShared'] == 1:
+                    logging.debug(f"Calendar ID: {calendar['id']} already shared")
+                    continue
+
+                calendar_id = calendar['id']
+                
+                rule = {
+                    'scope': {
+                        'type': 'user',
+                        'value': PERSONALEMAIL,
+                    },
+                    'role': 'owner'
+                }
+                
+                service.acl().insert(calendarId=calendar_id, body=rule).execute()
+                logging.info(f"Shared calendar ID: {calendar_id} with {PERSONALEMAIL}")
+                updateCalendarDBByGoogleId(calendar_id, 'isShared', 1)
+        except Exception as e:
+            logging.error(f"An error occurred: {e}")
+
+def bulkDeleteCalendarEvents(games, clubCalendarId=None):
+    service = getGoogleService()
+    results = []
+    gameMap = {}
+
+    def callback(request_id, response, exception):
+        if exception is not None:
+            # results.append({'request_id': request_id, 'status': 'failed', 'error': str(exception)})
+            logMessage = f"An error occurred while deleting an event: {exception}"
+            logging.error(logMessage)
+            sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
+        else:
+            results.append({'request_id': request_id, 'status': 'success', 'response': response})
+            # remove the eventId of the game in the database 
+            game = gameMap[request_id]
+            field = 'teamCalendarEventId' if clubCalendarId is None else 'clubCalendarEventId'
+            updateGameDB(game['id'], field, None)
+
+    # Group games by calendar ID
+    calendar_batches = {}
+
+    for game in games:
+        # Generate a unique request_id for each game
+        request_id = str(uuid.uuid4())
+        gameMap[request_id] = game
+        logging.debug(f"Request ID: {request_id} for game ID: {game['id']}")
+
+        calendar_id = game['teamCalendarId'] if clubCalendarId is None else clubCalendarId
+
+        if calendar_id not in calendar_batches:
+            calendar_batches[calendar_id] = service.new_batch_http_request()
+
+        if clubCalendarId is None:
+            calendar_batches[calendar_id].add(service.events().delete(calendarId=game['teamCalendarId'], eventId=game['teamCalendarEventId']), callback=callback, request_id=request_id)
+        else:
+            calendar_batches[calendar_id].add(service.events().delete(calendarId=clubCalendarId, eventId=game['clubCalendarEventId']), callback=callback, request_id=request_id)
+
+    # Execute each batch request separately
+    for calendar_id, batch in calendar_batches.items():
+        batch.execute()
+
+    return results
 
 #endregion
 
@@ -185,81 +280,85 @@ def updateGames(club=None):
     logging.debug(f"Updating games for club: {club}")
 
     url = CLUBGAMESURL
+    data = {
+        'actionType': 'searchGames',
+        'from': '01.07.24',
+        'federationId': '10',
+        'clubId': club['clubId'],
+        'maxResult': '500'
+    }
     params = {
-        'club': club['clubId'],
-        'jsoncallback': 'jsoncallback'
+        'perspective': 'de_default'
     }
 
     try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        logging.debug(f"Fetched data: {response.text[:200]}...")  # Log first 200 chars of response
+        response = requests.post(url, data=data, params=params)
 
-        json_data = response.text[13:-2]
-        data = json.loads(json_data)
-        soup = BeautifulSoup(data['html'], 'html.parser')
+        # Check if the request was successful
+        if response.status_code == 200:
+            # Parse the HTML response
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Find the table with the game data
+            table = soup.select_one('#body table.forms')
+            
+            # Extract specific game data from the table rows, skipping the first two rows
+            gamesList = []
+            rows = table.find_all('tr')[2:]  # Skip the first two rows
+            for row in rows:
+                cells = row.find_all('td')
 
-        games = soup.find_all('tr')
-        gamesList = []
-        for game in games:
-            if game == games[0]:
-                continue
-            elements = game.find_all('td')
+                league = cells[3].text.strip()
+                if not club['includeAll'] and league not in club['includeLeagues']:
+                    continue
 
-            league = elements[2].text
-            if not club['includeAll'] and league not in club['leagues']:
-                continue
+                if club['combineLeagues'] != None:
+                    for combine in club['combineLeagues']:
+                        if league == combine['combine']:
+                            league = combine['into']
 
-            date = elements[1].text
-            dateObj = None
-            timestamp = None
-            if date:
-                dateObj = datetime.datetime.strptime(date, '%d.%m.%Y, %H:%M')
-                dateObj = pytz.timezone('Europe/Zurich').localize(dateObj)
-                timestamp = dateObj.timestamp()
+                # Set locale to German
+                locale.setlocale(locale.LC_TIME, 'de_DE')
+                date = cells[0].text.strip()
+                dateObj = None
+                if date != '':
+                    # format: Fr 01.07.24 20:00
+                    dateObj = datetime.datetime.strptime(date, '%a %d.%m.%y %H:%M')
+                    dateObj = pytz.timezone('Europe/Zurich').localize(dateObj)
 
-            gameObj = {
-                'day': elements[0].text,
-                'date': dateObj,
-                'league': league,
-                'homeTeam': elements[3].text,
-                'awayTeam': elements[4].text,
-                'gym': elements[5].text,
-                'result': elements[6].text,
-                'clubCalendarEventId': None,
-                'teamCalendarEventId': None,
-                'teamCalendarId': None
-            }
-
-            # Attention, if timestamp is not defined, the id might not be unique
-            id = league + '_' + gameObj['homeTeam'] + '_' + gameObj['awayTeam'] + '_' + str(timestamp)
-            id = id.replace(' ', '_').lower()
-
-            gameObj['id'] = id
-
-            for replacement in NAMEREPLACEMENTS:
-                if not gameObj['homeTeam'].startswith(CLUBNAME):
-                    gameObj['awayTeam'] = gameObj['awayTeam'].replace(replacement, CLUBNAME)
-                if not gameObj['awayTeam'].startswith(CLUBNAME):
-                    gameObj['homeTeam'] = gameObj['homeTeam'].replace(replacement, CLUBNAME)
-
-            if 'halle' not in gameObj['gym'].lower():
-                gameObj['gym'] = 'Halle: ' + gameObj['gym']
-
-            gamesList.append(gameObj)
-            logging.debug(f"Game object created: {gameObj}")
+                gameData = {
+                    'date': dateObj,
+                    'league': league,
+                    'id': cells[5].text.strip(),
+                    'gym': cells[6].text.strip(),
+                    'homeTeam': cells[7].text.strip(),
+                    'awayTeam': cells[8].text.strip(),
+                    'result': cells[11].text.strip(),
+                }
+                gamesList.append(gameData)
+            
+        else:
+            logMessage = f"Failed to retrieve data from Basketplan. Status code: {response.status_code}"
+            logging.error(logMessage)
+            sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
+            return
 
         if not os.path.exists(GAMEDBPATH):
-            conn = sqlite3.connect(GAMEDBPATH)
-            createGameTable(conn)
-            conn.close()
+            try:
+                conn = sqlite3.connect(GAMEDBPATH)
+                createGameTable(conn)
+            except sqlite3.Error as error:
+                logMessage = f"An error occured while creating Game Table: {error}"
+                logging.error(logMessage)
+                sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
+            finally:
+                if conn:
+                    conn.close()
 
         conn = sqlite3.connect(GAMEDBPATH)
         c = conn.cursor()
 
         for game in gamesList:
-            if 'day' in game:
-                del game['day']
 
             c.execute('''
                 INSERT OR IGNORE INTO game (id, date, league, homeTeam, awayTeam, gym, result)
@@ -312,7 +411,13 @@ def checkGames():
 
     logging.info(f"Total Calendars loaded: {len(loadedCalendars)}")
     logging.info(f"Total Games loaded: {len(loadedGames)}")
-    logging.info(f"Total Events loaded: {len(calendarEvents)} (Note: This should be double the amount of games.)")
+    logging.info(f"Total Events loaded: {len(calendarEvents)}")
+
+    clubGamesToCreate = []
+    clubGamesToUpdate = []
+    teamGamesToCreate = []
+    teamGamesToUpdate = []
+    gamesToDelete = []
 
     for game in loadedGames:
         if game['teamCalendarId'] == None:
@@ -325,42 +430,66 @@ def checkGames():
                 continue
 
         if game['date'] == None or game['date'] == '':
-            logging.warning(f"Game with id {game['id']} has no date set. Unable to create a Calendar Event.")
-            noDateGamesCount += 1
+            if game['clubCalendarEventId'] != None or game['teamCalendarEventId'] != None:
+                logging.warning(f"Game with id {game['id']} has no date set. Unable to create or update Calendar Event. Marking for deletion.")
+                noDateGamesCount += 1
+                gamesToDelete.append(game)
+            else:
+                logging.warning(f"Game with id {game['id']} has no date set. No Event exists for this game.")
+                unchangedClubGamesCount += 1
             continue
 
         if game['clubCalendarEventId'] == None:
-            updateEvent(game, 'clubCalendarEventId', clubCalendarId, 'create')
-            createdClubGamesCount += 1
-            logging.debug(f"Created game with id {game['id']}")
+            clubGamesToCreate.append(game)
         else:
             for event in calendarEvents:
-                if (event['id'] == game['clubCalendarEventId']):
+                if event['id'] == game['clubCalendarEventId']:
                     if not compareGame(game, event):
-                        updateEvent(game, 'clubCalendarEventId', clubCalendarId, 'update')
-                        updatedClubGamesCount += 1
-                        logging.info(f"Updated game with id {game['id']} in Club-Calendar to date {game['date']}")
+                        clubGamesToUpdate.append(game)
                     else:
                         unchangedClubGamesCount += 1
                     break
 
         if game['teamCalendarEventId'] == None:
-            updateEvent(game, 'teamCalendarEventId', game['teamCalendarId'], 'create')
-            createdTeamGamesCount += 1
-            logging.debug(f"Created game with id {game['id']}")
+            teamGamesToCreate.append(game)
         else:
             for event in calendarEvents:
-                if (event['id'] == game['teamCalendarEventId']):
+                if event['id'] == game['teamCalendarEventId']:
                     if not compareGame(game, event):
-                        updateEvent(game, 'teamCalendarEventId', game['teamCalendarId'], 'update')
-                        updatedTeamGamesCount += 1
-                        logging.info(f"Updated game with id {game['id']} in Team-Calendar to date {game['date']}")
+                        teamGamesToUpdate.append(game)
                     else:
                         unchangedTeamGamesCount += 1
                     break
 
+    logging.debug(f"Club games to create: {len(clubGamesToCreate)}")
+    logging.debug(f"Club games to update: {len(clubGamesToUpdate)}")
+    logging.debug(f"Team games to create: {len(teamGamesToCreate)}")
+    logging.debug(f"Team games to update: {len(teamGamesToUpdate)}")
+
+    # Bulk update club calendar events
+    clubCreateResults = bulkUpdateEvents(clubGamesToCreate, 'create', clubCalendarId)
+    clubUpdateResults = bulkUpdateEvents(clubGamesToUpdate, 'update', clubCalendarId)
+
+    # Bulk update team calendar events
+    teamCreateResults = bulkUpdateEvents(teamGamesToCreate, 'create')
+    teamUpdateResults = bulkUpdateEvents(teamGamesToUpdate, 'update')
+
+    # Bulk delete calendar events
+    # club
+    deleteResults = bulkDeleteCalendarEvents(gamesToDelete, clubCalendarId)
+    # team
+    deleteResults = bulkDeleteCalendarEvents(gamesToDelete)
+
+    # Update counters based on results
+    createdClubGamesCount += len(clubCreateResults)
+    updatedClubGamesCount += len(clubUpdateResults)
+    createdTeamGamesCount += len(teamCreateResults)
+    updatedTeamGamesCount += len(teamUpdateResults)
+    deletedGamesCount = len(deleteResults)
+
     logMessages = [
         f"Games without date: {noDateGamesCount}",
+        f"Deleted Games: {deletedGamesCount}",
         f"Created Club-Calendar Events: {createdClubGamesCount}",
         f"Updated Club-Calendar Events: {updatedClubGamesCount}",
         f"Unchanged Club-Calendar Events: {unchangedClubGamesCount}",
@@ -454,13 +583,15 @@ def updateCalendars():
     for league in leagues:
         createCalendarDB(league['league'])
 
+    shareCalendars()
+
 def createCalendarDB(league=None, isClubCalendar=False):
     if not os.path.exists(CALENDARDBPATH):
         try:
             conn = sqlite3.connect(CALENDARDBPATH)
             createCalendarTable(conn)
         except sqlite3.Error as error:
-            logMessage = f"An error occured: {error}"
+            logMessage = f"An error occured while creating Calendar Table: {error}"
             logging.error(logMessage)
             sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
         finally:
@@ -482,7 +613,7 @@ def createCalendarDB(league=None, isClubCalendar=False):
                 INSERT INTO calendar (id, googleCalendarId, league, isClubCalendar)
                 VALUES (:id, :googleCalendarId, :league, :isClubCalendar)
             ''', {
-                'id': league + '_' + getRandom(),
+                'id': league,
                 'googleCalendarId': googleCalendarId,
                 'league': league,
                 'isClubCalendar': isClubCalendar
@@ -574,9 +705,33 @@ def createCalendarTable(conn):
             id text PRIMARY KEY,
             googleCalendarId text,
             league text NULL,
-            isClubCalendar boolean
+            isClubCalendar boolean,
+            isShared boolean DEFAULT 0
         )
     ''')
+
+def updateCalendarDBByGoogleId(id, field, value):
+    try:
+        conn = sqlite3.connect(CALENDARDBPATH)
+        c = conn.cursor()
+        logging.debug(f"Attempting to update calendar with Google CalendarID {id}: Field {field} with value {value}")
+
+        query = f'''
+            UPDATE calendar
+            SET {field} = :value
+            WHERE googleCalendarId = :id
+        '''
+        c.execute(query, {'id': id, 'value': value})
+
+        logging.debug(f"Rows updated: {c.rowcount}")
+
+        conn.commit()
+    except sqlite3.Error as error:
+        logMessage = f"An error occured: {error}"
+        logging.error(logMessage)
+        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
+    finally:
+        conn.close()
 
 #endregion
 
@@ -604,16 +759,13 @@ def findLeagues():
         return []
 
 def compareGame(game, calendarEvent):
-    game_date = parser.parse(game['date'])
-    calendar_event_date = parser.parse(calendarEvent['start']['dateTime'])
+    gameDate = parser.parse(game['date'])
+    calendarEventDate = parser.parse(calendarEvent['start']['dateTime'])
+    
     return (
-        game_date == calendar_event_date and
+        gameDate == calendarEventDate and
         game['gym'] == calendarEvent['location']
     )
-
-def getRandom():
-    characters = string.ascii_letters + string.digits
-    return ''.join(random.choices(characters, k=8))
 
 #endregion
 
@@ -642,7 +794,7 @@ def sendNotification(title, message):
 
     # Check if the request was successful
     if response.status_code == 200:
-        logging.info("Notification sent successfully!")
+        logging.debug("Notification sent successfully!")
     else:
         logging.error(f"Failed to send notification: {response.status_code} - {response.text}")
 
