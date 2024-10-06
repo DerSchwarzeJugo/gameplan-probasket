@@ -108,14 +108,13 @@ def fetchEvents(calendar):
 
 def bulkUpdateEvents(games, case='update', clubCalendarId=None):
     service = getGoogleService()
-    batch = service.new_batch_http_request()
-
     results = []
     gameMap = {}
 
     def callback(request_id, response, exception):
         if exception is not None:
             results.append({'request_id': request_id, 'status': 'failed', 'error': str(exception)})
+            logging.error(f"An error occurred while creating or updating an event: {exception}")
         else:
             event_id = response.get('id') if response else None
             results.append({'request_id': request_id, 'status': 'success', 'response': response, 'event_id': event_id})
@@ -123,6 +122,9 @@ def bulkUpdateEvents(games, case='update', clubCalendarId=None):
             game = gameMap[request_id]
             field = 'teamCalendarEventId' if clubCalendarId is None else 'clubCalendarEventId'
             updateGameDB(game['id'], field, event_id)
+
+    # Group games by calendar ID
+    calendar_batches = {}
 
     for game in games:
         startDateTime = parser.parse(game['date'])
@@ -152,26 +154,29 @@ def bulkUpdateEvents(games, case='update', clubCalendarId=None):
         # Generate a unique request_id for each game
         request_id = str(uuid.uuid4())
         gameMap[request_id] = game
+        logging.debug(f"Request ID: {request_id} for game ID: {game['id']}")
+
+        calendar_id = game['teamCalendarId'] if clubCalendarId is None else clubCalendarId
+
+        if calendar_id not in calendar_batches:
+            calendar_batches[calendar_id] = service.new_batch_http_request()
 
         if case == 'update':
             if clubCalendarId is None:
-                batch.add(service.events().patch(calendarId=game['teamCalendarId'], eventId=game['teamCalendarEventId'], body=event), callback=callback, request_id=request_id)
+                calendar_batches[calendar_id].add(service.events().patch(calendarId=game['teamCalendarId'], eventId=game['teamCalendarEventId'], body=event), callback=callback, request_id=request_id)
             else:
-                batch.add(service.events().patch(calendarId=clubCalendarId, eventId=game['clubCalendarEventId'], body=event), callback=callback, request_id=request_id)
+                calendar_batches[calendar_id].add(service.events().patch(calendarId=clubCalendarId, eventId=game['clubCalendarEventId'], body=event), callback=callback, request_id=request_id)
         elif case == 'create':
             if clubCalendarId is None:
-                batch.add(service.events().insert(calendarId=game['teamCalendarId'], body=event), callback=callback, request_id=request_id)
+                calendar_batches[calendar_id].add(service.events().insert(calendarId=game['teamCalendarId'], body=event), callback=callback, request_id=request_id)
             else:
-                batch.add(service.events().insert(calendarId=clubCalendarId, body=event), callback=callback, request_id=request_id)
+                calendar_batches[calendar_id].add(service.events().insert(calendarId=clubCalendarId, body=event), callback=callback, request_id=request_id)
 
-    batch.execute()
+    # Execute each batch request separately
+    for calendar_id, batch in calendar_batches.items():
+        batch.execute()
+
     return results
-
-def updateGameDB(game_id, field, event_id):
-    # Implement the logic to update the game in the database with the new event ID
-    # Example: Update the database with the new event ID
-    # db.update_game(game_id, {field: event_id})
-    pass
 
 def fetchCalendarEvents(loadedCalendars):
     allEvents = []
@@ -425,6 +430,11 @@ def checkGames():
                     else:
                         unchangedTeamGamesCount += 1
                     break
+
+    logging.debug(f"Club games to create: {len(clubGamesToCreate)}")
+    logging.debug(f"Club games to update: {len(clubGamesToUpdate)}")
+    logging.debug(f"Team games to create: {len(teamGamesToCreate)}")
+    logging.debug(f"Team games to update: {len(teamGamesToUpdate)}")
 
     # Bulk update club calendar events
     clubCreateResults = bulkUpdateEvents(clubGamesToCreate, 'create', clubCalendarId)
