@@ -58,11 +58,10 @@ def getGoogleService():
         return service
     return None
 
-# TODO: Make Calendar available for public, to be able to share it with the team
-def createGoogleCalendar(league = None):
+def createGoogleCalendar(league=None):
     try:
         service = getGoogleService()
-        if league != None:
+        if league is not None:
             calendarName = CLUBNAMESHORT + ' ' + league
         else:
             calendarName = CLUBNAME
@@ -74,9 +73,18 @@ def createGoogleCalendar(league = None):
 
         created_calendar = service.calendars().insert(body=calendar).execute()
 
+        # Make the calendar publicly accessible
+        rule = {
+            'scope': {
+                'type': 'default',
+            },
+            'role': 'reader'
+        }
+        service.acl().insert(calendarId=created_calendar['id'], body=rule).execute()
+
         return created_calendar['id']
     except HttpError as error:
-        logMessage = f"An error occured: {error}"
+        logMessage = f"An error occurred: {error}"
         logging.error(logMessage)
         sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
 
@@ -171,7 +179,6 @@ def shareCalendars():
                     continue
 
                 calendar_id = calendar['id']
-                logging.info(f"Sharing calendar ID: {calendar_id} with {PERSONALEMAIL}")
                 
                 rule = {
                     'scope': {
