@@ -58,6 +58,7 @@ def getGoogleService():
         return service
     return None
 
+# TODO: Make Calendar available for public, to be able to share it with the team
 def createGoogleCalendar(league = None):
     try:
         service = getGoogleService()
@@ -96,18 +97,28 @@ def fetchEvents(calendar):
         logging.error(logMessage)
         sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
 
-def updateEvent(loadedGame, field, calendarId, case='update'):
-    try:
-        service = getGoogleService()
-        
-        startDateTime = parser.parse(loadedGame['date'])
+def bulkUpdateEvents(games, field, calendarId, case='update'):
+    service = getGoogleService()
+    batch = service.new_batch_http_request()
+
+    results = []
+
+    def callback(request_id, response, exception):
+        if exception is not None:
+            results.append({'request_id': request_id, 'status': 'failed', 'error': str(exception)})
+        else:
+            results.append({'request_id': request_id, 'status': 'success', 'response': response})
+
+    for game in games:
+        # TODO: Handle empty date
+        startDateTime = parser.parse(game['date'])
         zurich_tz = pytz.timezone('Europe/Zurich')
         startDateTime = startDateTime.astimezone(zurich_tz)
         endDateTime = startDateTime + datetime.timedelta(hours=2)
 
         event = {
-            'summary': f'{loadedGame["league"]} {loadedGame["homeTeam"]} vs. {loadedGame["awayTeam"]}',
-            'location': loadedGame['gym'],
+            'summary': f'{game["league"]} {game["homeTeam"]} vs. {game["awayTeam"]}',
+            'location': game['gym'],
             'start': {
                 'dateTime': startDateTime.isoformat(),
                 'timeZone': 'Europe/Zurich',
@@ -125,18 +136,12 @@ def updateEvent(loadedGame, field, calendarId, case='update'):
         }
 
         if case == 'update':
-            event = service.events().patch(calendarId=calendarId, eventId=loadedGame[field], body=event).execute()
-        if case == 'create':
-            event = service.events().insert(calendarId=calendarId, body=event).execute()
-            updateGameDB(loadedGame['id'], field, event['id'])
-        
-        return True
+            batch.add(service.events().patch(calendarId=calendarId, eventId=game[field], body=event), callback=callback)
+        elif case == 'create':
+            batch.add(service.events().insert(calendarId=calendarId, body=event), callback=callback)
 
-    except HttpError as error:
-        logMessage = f"An error occurred: {error}"
-        logging.error(logMessage)
-        sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
-        return False
+    batch.execute()
+    return results
 
 def fetchCalendarEvents(loadedCalendars):
     allEvents = []
@@ -329,6 +334,11 @@ def checkGames():
     logging.info(f"Total Games loaded: {len(loadedGames)}")
     logging.info(f"Total Events loaded: {len(calendarEvents)}")
 
+    clubGamesToCreate = []
+    clubGamesToUpdate = []
+    teamGamesToCreate = []
+    teamGamesToUpdate = []
+
     for game in loadedGames:
         if game['teamCalendarId'] == None:
             calendar = checkCalendarExists(game['league'])
@@ -345,34 +355,40 @@ def checkGames():
             continue
 
         if game['clubCalendarEventId'] == None:
-            updateEvent(game, 'clubCalendarEventId', clubCalendarId, 'create')
-            createdClubGamesCount += 1
-            logging.debug(f"Created Game Event with id {game['id']}")
+            clubGamesToCreate.append(game)
         else:
             for event in calendarEvents:
-                if (event['id'] == game['clubCalendarEventId']):
+                if event['id'] == game['clubCalendarEventId']:
                     if not compareGame(game, event):
-                        updateEvent(game, 'clubCalendarEventId', clubCalendarId, 'update')
-                        updatedClubGamesCount += 1
-                        logging.info(f"Updated Game Event with id {game['id']} in Club-Calendar to date {game['date']} and location {game['gym']}")
+                        clubGamesToUpdate.append(game)
                     else:
                         unchangedClubGamesCount += 1
                     break
 
         if game['teamCalendarEventId'] == None:
-            updateEvent(game, 'teamCalendarEventId', game['teamCalendarId'], 'create')
-            createdTeamGamesCount += 1
-            logging.debug(f"Created Game Event with id {game['id']}")
+            teamGamesToCreate.append(game)
         else:
             for event in calendarEvents:
-                if (event['id'] == game['teamCalendarEventId']):
+                if event['id'] == game['teamCalendarEventId']:
                     if not compareGame(game, event):
-                        updateEvent(game, 'teamCalendarEventId', game['teamCalendarId'], 'update')
-                        updatedTeamGamesCount += 1
-                        logging.info(f"Updated Game Event with id {game['id']} in Team-Calendar to date {game['date']} and location {game['gym']}")
+                        teamGamesToUpdate.append(game)
                     else:
                         unchangedTeamGamesCount += 1
                     break
+
+    # Bulk update club calendar events
+    clubCreateResults = bulkUpdateEvents(clubGamesToCreate, 'clubCalendarEventId', clubCalendarId, 'create')
+    clubUpdateResults = bulkUpdateEvents(clubGamesToUpdate, 'clubCalendarEventId', clubCalendarId, 'update')
+
+    # Bulk update team calendar events
+    teamCreateResults = bulkUpdateEvents(teamGamesToCreate, 'teamCalendarEventId', game['teamCalendarId'], 'create')
+    teamUpdateResults = bulkUpdateEvents(teamGamesToUpdate, 'teamCalendarEventId', game['teamCalendarId'], 'update')
+
+    # Update counters based on results
+    createdClubGamesCount += len(clubCreateResults)
+    updatedClubGamesCount += len(clubUpdateResults)
+    createdTeamGamesCount += len(teamCreateResults)
+    updatedTeamGamesCount += len(teamUpdateResults)
 
     logMessages = [
         f"Games without date: {noDateGamesCount}",
@@ -683,7 +699,7 @@ def sendNotification(title, message):
 
     # Check if the request was successful
     if response.status_code == 200:
-        logging.info("Notification sent successfully!")
+        logging.debug("Notification sent successfully!")
     else:
         logging.error(f"Failed to send notification: {response.status_code} - {response.text}")
 
