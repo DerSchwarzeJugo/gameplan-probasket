@@ -12,6 +12,7 @@ import sqlite3
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from dateutil import parser
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
@@ -113,19 +114,16 @@ def bulkUpdateEvents(games, case='update', clubCalendarId=None):
 
     def callback(request_id, response, exception):
         if exception is not None:
-            # results.append({'request_id': request_id, 'status': 'failed', 'error': str(exception)})
             logMessage = f"An error occurred while creating or updating an event: {exception}"
             logging.error(logMessage)
             sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
         else:
             event_id = response.get('id') if response else None
             results.append({'request_id': request_id, 'status': 'success', 'response': response, 'event_id': event_id})
-            # Update the game in the database with the new event ID
             game = gameMap[request_id]
             field = 'teamCalendarEventId' if clubCalendarId is None else 'clubCalendarEventId'
             updateGameDB(game['id'], field, event_id)
 
-    # Group games by calendar ID
     calendar_batches = {}
 
     for game in games:
@@ -153,7 +151,6 @@ def bulkUpdateEvents(games, case='update', clubCalendarId=None):
             },
         }
 
-        # Generate a unique request_id for each game
         request_id = str(uuid.uuid4())
         gameMap[request_id] = game
         logging.debug(f"Request ID: {request_id} for game ID: {game['id']}")
@@ -174,9 +171,23 @@ def bulkUpdateEvents(games, case='update', clubCalendarId=None):
             else:
                 calendar_batches[calendar_id].add(service.events().insert(calendarId=clubCalendarId, body=event), callback=callback, request_id=request_id)
 
-    # Execute each batch request separately
-    for calendar_id, batch in calendar_batches.items():
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    def execute_batch(batch, calendar_id):
         batch.execute()
+        for request_id in batch._request_id_to_callback.keys():
+            game = gameMap[request_id]
+            field = 'teamCalendarEventId' if clubCalendarId is None else 'clubCalendarEventId'
+            event_id = next((result['event_id'] for result in results if result['request_id'] == request_id), None)
+            if event_id:
+                updateGameDB(game['id'], field, event_id)
+
+    for calendar_id, batch in calendar_batches.items():
+        try:
+            execute_batch(batch, calendar_id)
+        except Exception as e:
+            logMessage = f"Batch execution failed for calendar ID {calendar_id}: {e}"
+            logging.error(logMessage)
+            sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
 
     return results
 
@@ -230,16 +241,11 @@ def bulkDeleteCalendarEvents(games, clubCalendarId=None):
 
     def callback(request_id, response, exception):
         if exception is not None:
-            # results.append({'request_id': request_id, 'status': 'failed', 'error': str(exception)})
             logMessage = f"An error occurred while deleting an event: {exception}"
             logging.error(logMessage)
             sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
         else:
             results.append({'request_id': request_id, 'status': 'success', 'response': response})
-            # remove the eventId of the game in the database 
-            game = gameMap[request_id]
-            field = 'teamCalendarEventId' if clubCalendarId is None else 'clubCalendarEventId'
-            updateGameDB(game['id'], field, None)
 
     # Group games by calendar ID
     calendar_batches = {}
@@ -260,9 +266,22 @@ def bulkDeleteCalendarEvents(games, clubCalendarId=None):
         else:
             calendar_batches[calendar_id].add(service.events().delete(calendarId=clubCalendarId, eventId=game['clubCalendarEventId']), callback=callback, request_id=request_id)
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    def execute_batch(batch, calendar_id):
+        batch.execute()
+        for request_id in batch._request_id_to_callback.keys():
+            game = gameMap[request_id]
+            field = 'teamCalendarEventId' if clubCalendarId is None else 'clubCalendarEventId'
+            updateGameDB(game['id'], field, None)
+
     # Execute each batch request separately
     for calendar_id, batch in calendar_batches.items():
-        batch.execute()
+        try:
+            execute_batch(batch, calendar_id)
+        except Exception as e:
+            logMessage = f"Batch execution failed for calendar ID {calendar_id}: {e}"
+            logging.error(logMessage)
+            sendNotification(CLUBNAMESHORT + ": Gameplan Error", logMessage)
 
     return results
 
