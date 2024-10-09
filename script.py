@@ -318,7 +318,7 @@ def updateGames(club=None):
                             league = combine['into']
 
                 # Set locale to German
-                locale.setlocale(locale.LC_TIME, 'de_DE')
+                locale.setlocale(locale.LC_TIME, 'de_DE.UTF-8')
                 date = cells[0].text.strip()
                 dateObj = None
                 if date != '':
