@@ -175,14 +175,19 @@ def bulkUpdateEvents(games, case='update', clubCalendarId=None):
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def execute_batch(batch, calendar_id):
-        batch.execute()
-        for request_id in list(batch._request_id_to_callback.keys()):
-            if request_id in successful_requests:
-                del batch._request_id_to_callback[request_id]
+        try:
+            batch.execute()
+        except AttributeError as e:
+            logging.error(f"AttributeError during batch execution for calendar ID {calendar_id}: {e}")
+            raise
 
     for calendar_id, batch in calendar_batches.items():
         try:
             execute_batch(batch, calendar_id)
+            # Remove successful requests from the batch
+            for request_id in list(batch._request_id_to_callback.keys()):
+                if request_id in successful_requests:
+                    del batch._request_id_to_callback[request_id]
         except Exception as e:
             logMessage = f"Batch execution failed for calendar ID {calendar_id}: {e}"
             logging.error(logMessage)
@@ -272,15 +277,20 @@ def bulkDeleteCalendarEvents(games, clubCalendarId=None):
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def execute_batch(batch, calendar_id):
-        batch.execute()
-        for request_id in list(batch._request_id_to_callback.keys()):
-            if request_id in successful_requests:
-                del batch._request_id_to_callback[request_id]
+        try:
+            batch.execute()
+        except AttributeError as e:
+            logging.error(f"AttributeError during batch execution for calendar ID {calendar_id}: {e}")
+            raise
 
     # Execute each batch request separately
     for calendar_id, batch in calendar_batches.items():
         try:
             execute_batch(batch, calendar_id)
+            # Remove successful requests from the batch
+            for request_id in list(batch._request_id_to_callback.keys()):
+                if request_id in successful_requests:
+                    del batch._request_id_to_callback[request_id]
         except Exception as e:
             logMessage = f"Batch execution failed for calendar ID {calendar_id}: {e}"
             logging.error(logMessage)
