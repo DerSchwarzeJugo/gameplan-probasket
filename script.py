@@ -112,6 +112,7 @@ def bulkUpdateEvents(games, case='update', clubCalendarId=None):
     results = []
     gameMap = {}
     successful_requests = set()
+    request_id_to_callback = {}
 
     def callback(request_id, response, exception):
         if exception is not None:
@@ -173,6 +174,8 @@ def bulkUpdateEvents(games, case='update', clubCalendarId=None):
             else:
                 calendar_batches[calendar_id].add(service.events().insert(calendarId=clubCalendarId, body=event), callback=callback, request_id=request_id)
 
+        request_id_to_callback[request_id] = callback
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def execute_batch(batch, calendar_id):
         try:
@@ -185,9 +188,9 @@ def bulkUpdateEvents(games, case='update', clubCalendarId=None):
         try:
             execute_batch(batch, calendar_id)
             # Remove successful requests from the batch
-            for request_id in list(batch._request_id_to_callback.keys()):
+            for request_id in list(request_id_to_callback.keys()):
                 if request_id in successful_requests:
-                    del batch._request_id_to_callback[request_id]
+                    del request_id_to_callback[request_id]
         except Exception as e:
             logMessage = f"Batch execution failed for calendar ID {calendar_id}: {e}"
             logging.error(logMessage)
@@ -243,6 +246,7 @@ def bulkDeleteCalendarEvents(games, clubCalendarId=None):
     results = []
     gameMap = {}
     successful_requests = set()
+    request_id_to_callback = {}
 
     def callback(request_id, response, exception):
         if exception is not None:
@@ -275,6 +279,8 @@ def bulkDeleteCalendarEvents(games, clubCalendarId=None):
         else:
             calendar_batches[calendar_id].add(service.events().delete(calendarId=clubCalendarId, eventId=game['clubCalendarEventId']), callback=callback, request_id=request_id)
 
+        request_id_to_callback[request_id] = callback
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def execute_batch(batch, calendar_id):
         try:
@@ -288,9 +294,9 @@ def bulkDeleteCalendarEvents(games, clubCalendarId=None):
         try:
             execute_batch(batch, calendar_id)
             # Remove successful requests from the batch
-            for request_id in list(batch._request_id_to_callback.keys()):
+            for request_id in list(request_id_to_callback.keys()):
                 if request_id in successful_requests:
-                    del batch._request_id_to_callback[request_id]
+                    del request_id_to_callback[request_id]
         except Exception as e:
             logMessage = f"Batch execution failed for calendar ID {calendar_id}: {e}"
             logging.error(logMessage)
