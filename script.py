@@ -364,6 +364,7 @@ def updateGames(club=None):
                     dateObj = datetime.datetime.strptime(date, '%a %d.%m.%y %H:%M')
                     dateObj = pytz.timezone('Europe/Zurich').localize(dateObj)
 
+				# @TODO: Result ist not being formatted correctly, since it has whitespaces in it, non-breaking and not used further though
                 gameData = {
                     'date': dateObj,
                     'league': league,
