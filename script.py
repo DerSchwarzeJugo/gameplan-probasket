@@ -138,6 +138,7 @@ def bulkUpdateEvents(games, case='update', clubCalendarId=None):
         event = {
             'summary': f'{game["league"]} {game["homeTeam"]} vs. {game["awayTeam"]}',
             'location': game['gym'],
+            'description': 'SpielNr. ' + game['id'],  # Add this line
             'start': {
                 'dateTime': startDateTime.isoformat(),
                 'timeZone': 'Europe/Zurich',
@@ -364,6 +365,7 @@ def updateGames(club=None):
                     dateObj = datetime.datetime.strptime(date, '%a %d.%m.%y %H:%M')
                     dateObj = pytz.timezone('Europe/Zurich').localize(dateObj)
 
+                # @TODO: Result ist not being formatted correctly, since it has whitespaces in it, non-breaking and not used further though
                 gameData = {
                     'date': dateObj,
                     'league': league,
@@ -802,7 +804,8 @@ def compareGame(game, calendarEvent):
     
     return (
         gameDate == calendarEventDate and
-        game['gym'] == calendarEvent['location']
+        game['gym'] == calendarEvent['location'] and
+        game['id'] in calendarEvent['description']
     )
 
 #endregion
