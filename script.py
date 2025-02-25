@@ -804,7 +804,7 @@ def compareGame(game, calendarEvent):
     
     return (
         gameDate == calendarEventDate and
-        game['gym'] == calendarEvent['location'] and
+        game['gym'] == calendarEvent.get('location') and
         game['id'] in (calendarEvent.get('description') or '')
     )
 
